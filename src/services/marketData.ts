@@ -20,7 +20,10 @@ import {
   biasLabelWithConfidence,
   computeMarketBias,
   computeSemiconductorStrength,
+  reviewPosition,
   scoreWatchlistSymbol,
+  symbolUsesSemiconductorContext,
+  neutralSemiconductorStrength,
   toSemiconductorStrengthResponse,
 } from "./scoring.js";
 import {
@@ -39,6 +42,7 @@ import {
   type FuturesResponse,
   type MarketBreadthResponse,
   type NewsItem,
+  type PositionReviewResponse,
   type PremarketMoversResponse,
   type SemiconductorStrengthResponse,
   type WatchlistSignalsResponse,
@@ -453,6 +457,94 @@ export async function getWatchlistSignals(
       warnings,
       signals,
     };
+  });
+}
+
+export async function getPositionReview(input: {
+  symbol: string;
+  costBasis?: number;
+  currentValue?: number;
+}): Promise<PositionReviewResponse> {
+  const symbol = input.symbol.toUpperCase();
+  const cacheKey = `tool:position-review:${symbol}:${input.costBasis ?? ""}:${input.currentValue ?? ""}`;
+  const needsSemiContext = symbolUsesSemiconductorContext(symbol);
+
+  return getCached(cacheKey, CACHE_TTL.MARKET_DATA_MS, async () => {
+    const warnings: string[] = [];
+    const finviz = await safeFetchFinvizHomepage();
+    if (finviz.warning) {
+      warnings.push(finviz.warning);
+    }
+
+    const futuresResult = await getFutures();
+    warnings.push(...(futuresResult.warnings ?? []));
+
+    let semiResult: SemiconductorStrengthResponse | null = null;
+    if (needsSemiContext) {
+      semiResult = await getSemiconductorStrength();
+      warnings.push(...(semiResult.warnings ?? []));
+    }
+
+    const breadth = finviz.data?.breadth ?? emptyBreadth();
+    const marketBias = computeMarketBias(futuresResult.futures, breadth);
+
+    const quoteSymbols = needsSemiContext
+      ? [...new Set([symbol, ...SEMICONDUCTOR_SYMBOLS])]
+      : [symbol];
+    const quoteResult = await fetchQuotes(quoteSymbols, {
+      finvizSnapshot: finviz.data ?? null,
+    });
+    warnings.push(...quoteResult.warnings);
+
+    if (quoteResult.diagnostics.yahooBatchResolved === 0) {
+      warnings.push(
+        "Yahoo Finance batch returned no data — quote confidence may be reduced",
+      );
+    }
+
+    const semiconductorStrength = needsSemiContext
+      ? computeSemiconductorStrength(
+          quoteResult.quotes,
+          finviz.data?.majorNews ?? [],
+        )
+      : neutralSemiconductorStrength();
+
+    const snapshot = {
+      topGainers: finviz.data?.topGainers ?? [],
+      topLosers: finviz.data?.topLosers ?? [],
+      unusualVolume: finviz.data?.unusualVolume ?? [],
+      majorNews: finviz.data?.majorNews ?? [],
+    };
+
+    const quote = quoteResult.quotes.get(symbol) ?? null;
+    const headline = await fetchYahooNewsHeadline(symbol);
+    const finvizLists = finvizListsForSymbol(symbol, snapshot);
+
+    const signal = scoreWatchlistSymbol({
+      symbol,
+      quote,
+      finvizLists,
+      headline,
+      marketBias,
+      semiconductorStrength,
+      nasdaqFuturesChange: futuresResult.futures.nasdaq100.changePercent,
+    });
+
+    return reviewPosition({
+      symbol,
+      costBasis: input.costBasis,
+      currentValue: input.currentValue,
+      signal,
+      marketBias,
+      semiconductorStrength,
+      nasdaqFuturesChange: futuresResult.futures.nasdaq100.changePercent,
+      sources: {
+        quoteSource: signal.quoteSource ?? null,
+        semiconductorSource: semiResult?.source ?? null,
+        futuresSource: futuresResult.source,
+      },
+      warnings: warnings.length > 0 ? [...new Set(warnings)] : undefined,
+    });
   });
 }
 

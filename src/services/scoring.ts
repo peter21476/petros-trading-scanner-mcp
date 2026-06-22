@@ -5,6 +5,8 @@ import {
   type MarketBreadth,
   type PortfolioNote,
   type PortfolioPosition,
+  type PositionAction,
+  type PositionReviewResponse,
   type SemiconductorStrengthResponse,
   type SemiconductorSymbolDetail,
   type SnapshotStock,
@@ -374,10 +376,9 @@ export function scoreWatchlistSymbol(input: {
     reasons.push(`Recent headline: ${headline}`);
   }
 
-  const isSemi = SEMICONDUCTOR_SYMBOLS.includes(
-    symbol.toUpperCase() as (typeof SEMICONDUCTOR_SYMBOLS)[number],
-  );
-  const isSoxl = symbol.toUpperCase() === "SOXL";
+  const isSemi = isSemiconductorSymbol(symbol.toUpperCase());
+  const isSemiEtf = isSemiconductorEtf(symbol.toUpperCase());
+  const isLeveraged = isLeveragedEtf(symbol.toUpperCase());
 
   if (isSemi && semiconductorStrength.strength === "strong") {
     score += 1.2;
@@ -387,10 +388,12 @@ export function scoreWatchlistSymbol(input: {
     reasons.push("Semiconductor sector weakness");
   }
 
-  if (isSoxl) {
+  if (isLeveraged) {
     riskFlags.push("Leveraged ETF");
     riskFlags.push("High volatility");
+  }
 
+  if (isSemiEtf || isLeveragedEtf(symbol.toUpperCase())) {
     const nasdaqChange = input.nasdaqFuturesChange;
     if (
       semiconductorStrength.strength === "strong" &&
@@ -398,16 +401,16 @@ export function scoreWatchlistSymbol(input: {
       nasdaqChange > 0
     ) {
       score += 1.5;
-      reasons.push("Strong semis + positive Nasdaq futures (SOXL tailwind)");
+      reasons.push("Strong semis + positive Nasdaq futures (sector ETF tailwind)");
     } else if (
       nasdaqChange != null &&
       nasdaqChange < 0 &&
       semiconductorStrength.strength === "weak"
     ) {
       score -= 1.5;
-      reasons.push("Negative Nasdaq futures + weak semiconductor leaders (SOXL headwind)");
-    } else {
-      reasons.push("SOXL setup mixed between Nasdaq futures and semiconductor breadth");
+      reasons.push("Negative Nasdaq futures + weak semiconductor leaders (sector ETF headwind)");
+    } else if (isSemiEtf) {
+      reasons.push("Sector ETF setup mixed between Nasdaq futures and semiconductor breadth");
     }
   }
 
@@ -526,4 +529,467 @@ export function buildSuggestedQuestions(
     "Any earnings this week that could move my watchlist?",
   ];
   return questions.slice(0, 5);
+}
+
+function computePnlPercent(
+  costBasis?: number,
+  currentValue?: number,
+): number | null {
+  if (
+    costBasis == null ||
+    currentValue == null ||
+    costBasis <= 0
+  ) {
+    return null;
+  }
+  return Number((((currentValue - costBasis) / costBasis) * 100).toFixed(2));
+}
+
+const SEMICONDUCTOR_ETFS = new Set(["SOXL", "SOXS", "SMH", "SOXX"]);
+const LEVERAGED_ETFS = new Set([
+  "SOXL",
+  "SOXS",
+  "TQQQ",
+  "SQQQ",
+  "UPRO",
+  "SPXU",
+  "TNA",
+  "TZA",
+  "TECL",
+  "TECS",
+  "FAS",
+  "FAZ",
+  "LABU",
+  "LABD",
+  "UDOW",
+  "SDOW",
+]);
+const INDEX_ETFS = new Set(["QQQ", "SPY", "IWM", "DIA"]);
+
+export function isSemiconductorSymbol(symbol: string): boolean {
+  return SEMICONDUCTOR_SYMBOLS.includes(
+    symbol.toUpperCase() as (typeof SEMICONDUCTOR_SYMBOLS)[number],
+  );
+}
+
+export function isSemiconductorEtf(symbol: string): boolean {
+  return SEMICONDUCTOR_ETFS.has(symbol.toUpperCase());
+}
+
+export function isLeveragedEtf(symbol: string): boolean {
+  return LEVERAGED_ETFS.has(symbol.toUpperCase());
+}
+
+export function symbolUsesSemiconductorContext(symbol: string): boolean {
+  const upper = symbol.toUpperCase();
+  return isSemiconductorSymbol(upper) || isSemiconductorEtf(upper);
+}
+
+export function neutralSemiconductorStrength(): SemiconductorStrength {
+  return {
+    strength: "mixed",
+    positiveCount: 0,
+    totalChecked: 0,
+    leaderSymbols: [],
+    laggardSymbols: [],
+    leaders: [],
+    laggards: [],
+    sectorScore: 5,
+    bias: "neutral",
+    confidence: 50,
+    symbolDetails: [],
+  };
+}
+
+type SectorRelevance = "semiconductor" | "broad_market" | "none";
+
+interface SymbolReviewContext {
+  symbol: string;
+  isSemiconductor: boolean;
+  isSemiconductorEtf: boolean;
+  isLeveragedEtf: boolean;
+  isIndexEtf: boolean;
+  sectorRelevance: SectorRelevance;
+}
+
+function analyzeSymbolReviewContext(
+  symbol: string,
+  signal: WatchlistSignal,
+): SymbolReviewContext {
+  const upper = symbol.toUpperCase();
+  const isSemiconductor = isSemiconductorSymbol(upper);
+  const isSemiEtf = isSemiconductorEtf(upper);
+  const isLeveraged =
+    isLeveragedEtf(upper) ||
+    signal.riskFlags.some((flag) => /leveraged/i.test(flag));
+  const isIndexEtf = INDEX_ETFS.has(upper);
+
+  let sectorRelevance: SectorRelevance = "none";
+  if (isSemiconductor || isSemiEtf) {
+    sectorRelevance = "semiconductor";
+  } else if (isIndexEtf || isLeveragedEtf(upper)) {
+    sectorRelevance = "broad_market";
+  }
+
+  return {
+    symbol: upper,
+    isSemiconductor,
+    isSemiconductorEtf: isSemiEtf,
+    isLeveragedEtf: isLeveraged,
+    isIndexEtf,
+    sectorRelevance,
+  };
+}
+
+function determinePositionAction(input: {
+  context: SymbolReviewContext;
+  signal: WatchlistSignal;
+  semiconductorStrength: SemiconductorStrength;
+  marketBias: BiasResult;
+  pnlPercent: number | null;
+}): PositionAction {
+  const { context, signal, semiconductorStrength, marketBias, pnlPercent } = input;
+  const semiStrong = semiconductorStrength.strength === "strong";
+  const semiWeak = semiconductorStrength.strength === "weak";
+  const sectorAlignedWeak =
+    context.sectorRelevance === "semiconductor" &&
+    semiWeak &&
+    marketBias.bias === "bearish" &&
+    signal.bias === "bearish";
+
+  if (signal.score <= 3.5 || sectorAlignedWeak) {
+    return "exit";
+  }
+
+  if (
+    signal.score <= 4.5 ||
+    signal.bias === "bearish" ||
+    (context.sectorRelevance === "semiconductor" &&
+      semiWeak &&
+      marketBias.bias === "bearish")
+  ) {
+    return "trim";
+  }
+
+  const sectorSupportsAdd =
+    context.sectorRelevance === "none" ||
+    (context.sectorRelevance === "semiconductor" && semiStrong) ||
+    (context.sectorRelevance === "broad_market" && marketBias.bias === "bullish");
+
+  if (
+    signal.score >= 7.5 &&
+    signal.bias === "bullish" &&
+    sectorSupportsAdd &&
+    marketBias.bias !== "bearish"
+  ) {
+    return "add";
+  }
+
+  if (pnlPercent != null && pnlPercent >= 25 && signal.score < 6.5) {
+    return "trim";
+  }
+
+  return "hold";
+}
+
+function buildPositionThesis(input: {
+  context: SymbolReviewContext;
+  signal: WatchlistSignal;
+  semiconductorStrength: SemiconductorStrength;
+  marketBias: BiasResult;
+  nasdaqFuturesChange?: number | null;
+  pnlPercent: number | null;
+}): string {
+  const {
+    context,
+    signal,
+    semiconductorStrength,
+    marketBias,
+    nasdaqFuturesChange,
+    pnlPercent,
+  } = input;
+  const { symbol, sectorRelevance } = context;
+  const semiStrong = semiconductorStrength.strength === "strong";
+  const semiWeak = semiconductorStrength.strength === "weak";
+  const futuresWeak = nasdaqFuturesChange != null && nasdaqFuturesChange < 0;
+  const futuresStrong = nasdaqFuturesChange != null && nasdaqFuturesChange > 0;
+
+  if (sectorRelevance === "semiconductor") {
+    if (semiStrong && futuresWeak) {
+      return `${symbol} thesis: semiconductor sector remains strong despite weak futures.`;
+    }
+    if (semiStrong && marketBias.bias !== "bearish") {
+      return `${symbol} thesis remains supported by strong semiconductor sector leadership.`;
+    }
+    if (semiWeak && marketBias.bias === "bearish") {
+      return `${symbol} thesis is under pressure from semiconductor weakness and bearish market tone.`;
+    }
+    return `${symbol} setup is mixed between semiconductor breadth and broader market direction.`;
+  }
+
+  if (sectorRelevance === "broad_market") {
+    if (marketBias.bias === "bullish" && futuresStrong) {
+      return `${symbol} aligns with bullish market bias and positive index futures.`;
+    }
+    if (marketBias.bias === "bearish" && futuresWeak) {
+      return `${symbol} faces headwinds from bearish market bias and weak index futures.`;
+    }
+    return `${symbol} setup is mixed between symbol momentum and broader market direction.`;
+  }
+
+  if (signal.bias === "bullish" && marketBias.bias === "bullish") {
+    return `${symbol} shows bullish symbol and market signals.`;
+  }
+  if (signal.bias === "bearish" || marketBias.bias === "bearish") {
+    return `${symbol} faces weaker symbol or market-level signals.`;
+  }
+
+  let thesis = `${symbol} setup is ${signal.bias} with ${marketBias.bias} overall market bias.`;
+  if (pnlPercent != null) {
+    thesis += ` Position is ${pnlPercent >= 0 ? "up" : "down"} ${Math.abs(pnlPercent).toFixed(2)}% vs cost basis.`;
+  }
+  return thesis;
+}
+
+function buildPositionStrengths(input: {
+  context: SymbolReviewContext;
+  signal: WatchlistSignal;
+  semiconductorStrength: SemiconductorStrength;
+  marketBias: BiasResult;
+  nasdaqFuturesChange?: number | null;
+}): string[] {
+  const strengths: string[] = [];
+  const { context, signal, semiconductorStrength, marketBias, nasdaqFuturesChange } =
+    input;
+
+  if (context.sectorRelevance === "semiconductor") {
+    if (semiconductorStrength.strength === "strong") {
+      strengths.push(
+        `Semiconductor sector score ${semiconductorStrength.sectorScore}/10 (${semiconductorStrength.confidence}% confidence)`,
+      );
+      if (semiconductorStrength.leaders.length > 0) {
+        strengths.push(
+          `Semi leaders: ${semiconductorStrength.leaders.slice(0, 4).join(", ")}`,
+        );
+      }
+    }
+  }
+
+  if (signal.bias === "bullish") {
+    strengths.push(`Watchlist signal is bullish (${signal.score}/10)`);
+  } else if (signal.score >= 6) {
+    strengths.push(`Moderately constructive symbol score (${signal.score}/10)`);
+  }
+
+  if (marketBias.bias === "bullish") {
+    strengths.push(`Market bias is bullish (${marketBias.confidence}% confidence)`);
+  }
+
+  if (
+    (context.sectorRelevance === "broad_market" || context.isLeveragedEtf) &&
+    nasdaqFuturesChange != null &&
+    nasdaqFuturesChange > 0
+  ) {
+    strengths.push(`Nasdaq 100 futures positive (+${nasdaqFuturesChange.toFixed(2)}%)`);
+  }
+
+  for (const reason of signal.reasons) {
+    if (
+      reason.includes("+") ||
+      reason.includes("strong") ||
+      reason.includes("bullish") ||
+      reason.includes("tailwind") ||
+      reason.includes("momentum")
+    ) {
+      strengths.push(reason);
+    }
+  }
+
+  if (signal.sourceQuality === "multi_source_agreement") {
+    strengths.push("Quote corroborated across multiple data sources");
+  }
+
+  return [...new Set(strengths)].slice(0, 6);
+}
+
+function buildPositionRisks(input: {
+  context: SymbolReviewContext;
+  signal: WatchlistSignal;
+  semiconductorStrength: SemiconductorStrength;
+  marketBias: BiasResult;
+  nasdaqFuturesChange?: number | null;
+}): string[] {
+  const risks: string[] = [...input.signal.riskFlags];
+  const { context, signal, semiconductorStrength, marketBias, nasdaqFuturesChange } =
+    input;
+
+  if (context.isLeveragedEtf && !risks.some((r) => /leveraged/i.test(r))) {
+    risks.push("Leveraged ETF — amplified gains and losses");
+  }
+
+  if (
+    context.sectorRelevance === "semiconductor" &&
+    semiconductorStrength.strength === "weak"
+  ) {
+    risks.push("Semiconductor sector showing broad weakness");
+    if (semiconductorStrength.laggards.length > 0) {
+      risks.push(
+        `Semi laggards: ${semiconductorStrength.laggards.slice(0, 4).join(", ")}`,
+      );
+    }
+  }
+
+  if (marketBias.bias === "bearish") {
+    risks.push(`Bearish market bias (${marketBias.confidence}% confidence)`);
+  }
+
+  if (
+    (context.sectorRelevance === "broad_market" || context.isLeveragedEtf) &&
+    nasdaqFuturesChange != null &&
+    nasdaqFuturesChange < 0
+  ) {
+    risks.push(`Nasdaq 100 futures negative (${nasdaqFuturesChange.toFixed(2)}%)`);
+  }
+
+  if (signal.bias === "bearish") {
+    risks.push(`Bearish watchlist signal (${signal.score}/10)`);
+  }
+
+  if (signal.dataFreshness === "stale") {
+    risks.push("Quote data may be stale — verify live prices");
+  }
+
+  if (signal.sourceQuality === "nasdaq_only") {
+    risks.push("Quote sourced from Nasdaq fallback only (Yahoo unavailable)");
+  }
+
+  for (const reason of signal.reasons) {
+    if (
+      reason.includes("headwind") ||
+      reason.includes("losers") ||
+      reason.includes("weak") ||
+      reason.includes("bearish") ||
+      (reason.includes("Price change") && reason.includes("-"))
+    ) {
+      risks.push(reason);
+    }
+  }
+
+  return [...new Set(risks)].slice(0, 8);
+}
+
+function computePositionConfidence(input: {
+  context: SymbolReviewContext;
+  signal: WatchlistSignal;
+  semiconductorStrength: SemiconductorStrength;
+  marketBias: BiasResult;
+  action: PositionAction;
+}): number {
+  const quoteConfidence = input.signal.confidence ?? 70;
+  const semiConfidence = input.semiconductorStrength.confidence;
+  const biasConfidence = input.marketBias.confidence;
+  const signalScoreComponent = (input.signal.score / 10) * 100;
+
+  const semiWeight =
+    input.context.sectorRelevance === "semiconductor" ? 0.35 : 0.05;
+  const quoteWeight = 0.3;
+  const biasWeight = 0.2;
+  const signalWeight = 0.15;
+  const remainder = 1 - quoteWeight - semiWeight - biasWeight - signalWeight;
+
+  let confidence = Math.round(
+    quoteConfidence * quoteWeight +
+      semiConfidence * semiWeight +
+      biasConfidence * (biasWeight + remainder) +
+      signalScoreComponent * signalWeight,
+  );
+
+  if (input.signal.sourceQuality === "multi_source_agreement") {
+    confidence += 3;
+  }
+  if (input.signal.dataFreshness === "stale") {
+    confidence -= 5;
+  }
+  if (
+    input.action === "hold" &&
+    input.context.sectorRelevance === "semiconductor" &&
+    input.semiconductorStrength.strength === "strong"
+  ) {
+    confidence += 4;
+  }
+
+  return Math.max(0, Math.min(100, confidence));
+}
+
+export function reviewPosition(input: {
+  symbol: string;
+  costBasis?: number;
+  currentValue?: number;
+  signal: WatchlistSignal;
+  marketBias: BiasResult;
+  semiconductorStrength: SemiconductorStrength;
+  nasdaqFuturesChange?: number | null;
+  sources?: PositionReviewResponse["sources"];
+  warnings?: string[];
+}): PositionReviewResponse {
+  const symbol = input.symbol.toUpperCase();
+  const pnlPercent = computePnlPercent(input.costBasis, input.currentValue);
+  const context = analyzeSymbolReviewContext(symbol, input.signal);
+
+  const action = determinePositionAction({
+    context,
+    signal: input.signal,
+    semiconductorStrength: input.semiconductorStrength,
+    marketBias: input.marketBias,
+    pnlPercent,
+  });
+
+  const thesis = buildPositionThesis({
+    context,
+    signal: input.signal,
+    semiconductorStrength: input.semiconductorStrength,
+    marketBias: input.marketBias,
+    nasdaqFuturesChange: input.nasdaqFuturesChange,
+    pnlPercent,
+  });
+
+  const strengths = buildPositionStrengths({
+    context,
+    signal: input.signal,
+    semiconductorStrength: input.semiconductorStrength,
+    marketBias: input.marketBias,
+    nasdaqFuturesChange: input.nasdaqFuturesChange,
+  });
+
+  const risks = buildPositionRisks({
+    context,
+    signal: input.signal,
+    semiconductorStrength: input.semiconductorStrength,
+    marketBias: input.marketBias,
+    nasdaqFuturesChange: input.nasdaqFuturesChange,
+  });
+
+  const confidence = computePositionConfidence({
+    context,
+    signal: input.signal,
+    semiconductorStrength: input.semiconductorStrength,
+    marketBias: input.marketBias,
+    action,
+  });
+
+  return {
+    timestamp: new Date().toISOString(),
+    symbol,
+    costBasis: input.costBasis,
+    currentValue: input.currentValue,
+    pnlPercent,
+    action,
+    confidence,
+    thesis,
+    strengths,
+    risks,
+    signalScore: input.signal.score,
+    sources: input.sources,
+    warnings: input.warnings,
+  };
 }

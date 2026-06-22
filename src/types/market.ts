@@ -110,6 +110,28 @@ export interface PortfolioNote {
   thesisStatus: "intact" | "mixed" | "weakened";
 }
 
+export type PositionAction = "hold" | "add" | "trim" | "exit";
+
+export interface PositionReviewResponse {
+  timestamp: string;
+  symbol: string;
+  costBasis?: number;
+  currentValue?: number;
+  pnlPercent?: number | null;
+  action: PositionAction;
+  confidence: number;
+  thesis: string;
+  strengths: string[];
+  risks: string[];
+  signalScore?: number;
+  sources?: {
+    quoteSource?: string | null;
+    semiconductorSource?: string | null;
+    futuresSource: string;
+  };
+  warnings?: string[];
+}
+
 export interface SemiconductorSymbolDetail {
   symbol: string;
   changePercent: number | null;

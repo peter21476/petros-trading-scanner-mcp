@@ -15,6 +15,7 @@ Read-only **Model Context Protocol (MCP)** server for short-term stock and ETF *
 | `get_earnings_calendar` | Upcoming earnings (Finviz API) |
 | `get_watchlist_signals` | Transparent 0–10 scores, bias, reasons, risk flags |
 | `get_semiconductor_strength` | Sector score, bias, confidence, leaders/laggards for 11 semi names (SOXL workflow) |
+| `get_position_review` | Single-position review for any symbol: action, confidence, thesis, strengths, risks |
 | `get_daily_briefing` | Full briefing with source attribution, confidence, news severity, portfolio notes |
 
 ### Data sources (free/public)
@@ -112,6 +113,32 @@ The server implements **Streamable HTTP** (`POST /mcp`) compatible with ChatGPT 
 - "Give me a market bias for today."
 - "Run semiconductor strength for my SOXL workflow."
 - "Run watchlist signals for SOXL, MU, NVDA, AMD, AVGO, INTC, MRVL, WDC."
+- "Review my SOXL position — cost basis $50, current value $51.17."
+- "Review my AAPL position — cost basis $180, current value $195."
+
+### Example: position review tool input
+
+Works for any stock or ETF (`SOXL`, `NVDA`, `AAPL`, `TQQQ`, etc.):
+
+```json
+{
+  "symbol": "SOXL",
+  "costBasis": 50,
+  "currentValue": 51.17
+}
+```
+
+Expected shape (values vary with live market data):
+
+```json
+{
+  "action": "hold",
+  "confidence": 76,
+  "thesis": "Semiconductor sector remains strong despite weak futures.",
+  "strengths": ["..."],
+  "risks": ["..."]
+}
+```
 
 ### Example: daily briefing tool input
 

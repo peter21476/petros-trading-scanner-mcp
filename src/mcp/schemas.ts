@@ -27,4 +27,10 @@ export const dailyBriefingInputSchema = z.object({
 export type PremarketMoversInput = z.infer<typeof premarketMoversInputSchema>;
 export type EarningsCalendarInput = z.infer<typeof earningsCalendarInputSchema>;
 export type WatchlistSignalsInput = z.infer<typeof watchlistSignalsInputSchema>;
-export type DailyBriefingInput = z.infer<typeof dailyBriefingInputSchema>;
+export const positionReviewInputSchema = z.object({
+  symbol: z.string().min(1).max(10),
+  costBasis: z.number().positive().optional(),
+  currentValue: z.number().positive().optional(),
+});
+
+export type PositionReviewInput = z.infer<typeof positionReviewInputSchema>;

@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   dailyBriefingInputSchema,
   earningsCalendarInputSchema,
+  positionReviewInputSchema,
   premarketMoversInputSchema,
   watchlistSignalsInputSchema,
 } from "./schemas.js";
@@ -11,6 +12,7 @@ import {
   getFinvizSnapshot,
   getFutures,
   getMarketBreadth,
+  getPositionReview,
   getPremarketMovers,
   getSemiconductorStrength,
   getWatchlistSignals,
@@ -151,6 +153,27 @@ export function registerTools(server: McpServer): void {
         return jsonResult(await getSemiconductorStrength());
       } catch (error) {
         return errorResult(`get_semiconductor_strength failed: ${String(error)}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    "get_position_review",
+    {
+      description:
+        "Review any open stock or ETF position with action (hold/add/trim/exit), confidence, thesis, strengths, and risks. Applies sector context for semiconductors and index/leveraged ETFs; general symbols use market bias and symbol signals. Research only — not a trade recommendation.",
+      inputSchema: {
+        symbol: positionReviewInputSchema.shape.symbol,
+        costBasis: positionReviewInputSchema.shape.costBasis,
+        currentValue: positionReviewInputSchema.shape.currentValue,
+      },
+    },
+    async (input) => {
+      try {
+        const parsed = positionReviewInputSchema.parse(input);
+        return jsonResult(await getPositionReview(parsed));
+      } catch (error) {
+        return errorResult(`get_position_review failed: ${String(error)}`);
       }
     },
   );
