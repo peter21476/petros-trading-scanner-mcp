@@ -2,6 +2,7 @@ import {
   computeAggregateDataFreshness,
   computeDataFreshness,
 } from "../utils/dataFreshness.js";
+import { computeWatchlistConfidence } from "../utils/quoteConfidence.js";
 import { CACHE_TTL, getCached } from "./cache.js";
 import { fetchFinvizEarnings, fetchFinvizHomepage, safeFetchFinvizHomepage } from "./finviz.js";
 import {
@@ -424,6 +425,9 @@ export async function getWatchlistSignals(
       timestamp: new Date().toISOString(),
       dataFreshness: computeAggregateDataFreshness(
         signals.map((signal) => signal.dataFreshness),
+      ),
+      confidence: computeWatchlistConfidence(
+        signals.map((signal) => signal.confidence),
       ),
       warnings,
       signals,

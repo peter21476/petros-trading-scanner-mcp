@@ -174,6 +174,7 @@ export interface WatchlistSignal {
   isDelayed?: boolean;
   quoteValidated?: boolean;
   dataFreshness?: DataFreshness;
+  confidence?: number;
   headline?: string | null;
   inFinvizLists?: string[];
 }
@@ -181,6 +182,7 @@ export interface WatchlistSignal {
 export interface WatchlistSignalsResponse {
   timestamp: string;
   dataFreshness: DataFreshness;
+  confidence: number;
   warnings?: string[];
   signals: WatchlistSignal[];
 }

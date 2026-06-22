@@ -11,6 +11,7 @@ import {
   type WatchlistSignal,
   type YahooQuote,
 } from "../types/market.js";
+import { computeQuoteConfidence } from "../utils/quoteConfidence.js";
 
 export type MarketBias = "bullish" | "neutral" | "bearish";
 
@@ -438,6 +439,14 @@ export function scoreWatchlistSymbol(input: {
     bias = "bearish";
   }
 
+  const dataFreshness = quote?.dataFreshness ?? "stale";
+  const quoteValidated = quote?.quoteValidated ?? false;
+  const confidence = computeQuoteConfidence({
+    dataFreshness,
+    quoteValidated,
+    hasPrice: quote?.price != null,
+  });
+
   return {
     symbol: symbol.toUpperCase(),
     score,
@@ -451,8 +460,9 @@ export function scoreWatchlistSymbol(input: {
     quoteSource: quote?.source ?? null,
     asOf: quote?.asOf ?? null,
     isDelayed: quote?.isDelayed ?? false,
-    quoteValidated: quote?.quoteValidated ?? false,
-    dataFreshness: quote?.dataFreshness ?? "stale",
+    quoteValidated,
+    dataFreshness,
+    confidence,
     headline: headline ?? null,
     inFinvizLists: finvizLists,
   };

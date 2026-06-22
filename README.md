@@ -166,11 +166,14 @@ Watchlist signals and semiconductor strength include extra fields so you can san
 | `quoteSource` | e.g. `Yahoo Finance`, `Nasdaq`, `Finviz topGainers` |
 | `quoteValidated` | `true` when price, change, and % are internally consistent |
 | `dataFreshness` | `"fresh"` or `"stale"` — based on `asOf` age (≤3 days = fresh) |
+| `confidence` | Quote quality score (0–100): fresh+validated ≈ 92, stale+validated ≈ 75, unvalidated &lt; 50 |
 | `isDelayed` | `true` for Finviz-only fallback quotes (change % only) |
 
 **Parser note:** Nasdaq quotes use `primaryData.lastSalePrice` — not market cap, 52-week high, or volume. If a price looks wrong, check `previousClose` and `asOf`: when change % looks realistic but the level seems off, the upstream feed (Yahoo/Nasdaq) may be reporting a different session or a forward-dated close. Cross-check with your broker.
 
 Daily briefings also include top-level `dataFreshness` — `"fresh"` only when futures, premarket, breadth, and all watchlist quotes are within the freshness window.
+
+`get_watchlist_signals` returns an overall `confidence` (average of per-symbol quote confidence scores).
 
 **The tools return data, scores, and reasons only — not buy/sell recommendations.** ChatGPT interprets the output; you make your own decisions.
 
@@ -201,6 +204,7 @@ src/
     quoteValidation.ts
     newsAnalysis.ts
     dataFreshness.ts
+    quoteConfidence.ts
 ```
 
 ---
