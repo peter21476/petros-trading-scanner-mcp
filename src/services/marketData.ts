@@ -12,7 +12,12 @@ import {
   computeSemiconductorStrength,
   scoreWatchlistSymbol,
 } from "./scoring.js";
-import { fetchYahooFutures, fetchYahooNewsHeadline, fetchYahooQuotes } from "./yahoo.js";
+import {
+  fetchYahooFutures,
+  fetchYahooMovers,
+  fetchYahooNewsHeadline,
+  fetchYahooQuotes,
+} from "./yahoo.js";
 import {
   emptyBreadth,
   emptyFutures,
@@ -105,6 +110,24 @@ export async function getPremarketMovers(limit = 20): Promise<PremarketMoversRes
       };
     }
 
+    const yahoo = await fetchYahooMovers(limit);
+    warnings.push(...yahoo.warnings);
+
+    if (
+      yahoo.leaders.length > 0 ||
+      yahoo.laggards.length > 0 ||
+      yahoo.mostActive.length > 0
+    ) {
+      return {
+        timestamp: new Date().toISOString(),
+        source: "Yahoo Finance",
+        warnings,
+        leaders: yahoo.leaders.slice(0, limit),
+        laggards: yahoo.laggards.slice(0, limit),
+        mostActive: yahoo.mostActive.slice(0, limit),
+      };
+    }
+
     const finviz = await safeFetchFinvizHomepage();
     if (finviz.warning) {
       warnings.push(finviz.warning);
@@ -116,7 +139,7 @@ export async function getPremarketMovers(limit = 20): Promise<PremarketMoversRes
 
     const fallback = finvizMoversToPremarket(gainers, losers, active, limit);
     warnings.push(
-      "Using Finviz top movers/unusual volume as premarket fallback (MarketWatch unavailable)",
+      "Using Finviz top movers/unusual volume as final fallback",
     );
 
     return {

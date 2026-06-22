@@ -1,11 +1,44 @@
 import * as cheerio from "cheerio";
 import { CACHE_TTL, getCached } from "./cache.js";
-import { fetchText } from "./http.js";
+import { USER_AGENT } from "./http.js";
 import { parseNumber, parsePercent, parseVolume, signedChange } from "../utils/parseNumber.js";
 import type { MoverStock } from "../types/market.js";
 import { logger } from "../utils/logger.js";
 
 const PREMARKET_URL = "https://www.marketwatch.com/tools/screener/premarket";
+
+const MARKETWATCH_HEADERS: Record<string, string> = {
+  "User-Agent": USER_AGENT,
+  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  "Accept-Language": "en-US,en;q=0.9",
+  Referer: "https://www.google.com/",
+  "Sec-Fetch-Dest": "document",
+  "Sec-Fetch-Mode": "navigate",
+  "Sec-Fetch-Site": "cross-site",
+};
+
+function isMarketWatchEnabled(): boolean {
+  return process.env.MARKETWATCH_ENABLED !== "false";
+}
+
+async function fetchMarketWatchHtml(url: string): Promise<{
+  status: number;
+  html: string;
+}> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: MARKETWATCH_HEADERS,
+    });
+    const html = await response.text();
+    return { status: response.status, html };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 function parseMoverTable(html: string, sectionTitle: string): MoverStock[] {
   const $ = cheerio.load(html);
@@ -80,15 +113,40 @@ export async function fetchMarketWatchPremarket(limit: number): Promise<{
   mostActive: MoverStock[];
   warning?: string;
 }> {
+  if (!isMarketWatchEnabled()) {
+    return { leaders: [], laggards: [], mostActive: [] };
+  }
+
   return getCached(`marketwatch:premarket:${limit}`, CACHE_TTL.MARKET_DATA_MS, async () => {
     try {
-      const html = await fetchText(PREMARKET_URL);
+      const { status, html } = await fetchMarketWatchHtml(PREMARKET_URL);
+
+      if (status === 401 || status === 403) {
+        return {
+          leaders: [],
+          laggards: [],
+          mostActive: [],
+          warning:
+            "MarketWatch blocks automated/cloud requests (HTTP 401). Fallback sources will be used.",
+        };
+      }
+
+      if (!status.toString().startsWith("2")) {
+        return {
+          leaders: [],
+          laggards: [],
+          mostActive: [],
+          warning: `MarketWatch returned HTTP ${status}`,
+        };
+      }
+
       if (isBlockedResponse(html)) {
         return {
           leaders: [],
           laggards: [],
           mostActive: [],
-          warning: "MarketWatch blocked or returned incomplete data (captcha/JS wall)",
+          warning:
+            "MarketWatch returned a bot-protection page (captcha/JS wall). Fallback sources will be used.",
         };
       }
 

@@ -9,7 +9,7 @@ Read-only **Model Context Protocol (MCP)** server for short-term stock and ETF *
 | Tool | Description |
 |------|-------------|
 | `get_futures` | Nasdaq 100, S&P 500, Dow, Russell 2000, crude, gold, Bitcoin |
-| `get_premarket_movers` | Leaders, laggards, most active (MarketWatch → Finviz fallback) |
+| `get_premarket_movers` | Leaders, laggards, most active (MarketWatch → Yahoo → Finviz fallback) |
 | `get_market_breadth` | Finviz advancing/declining, highs/lows, SMA50/SMA200 |
 | `get_finviz_snapshot` | Homepage-style snapshot: movers, news, headlines, breadth, futures |
 | `get_earnings_calendar` | Upcoming earnings (Finviz API) |
@@ -20,9 +20,12 @@ Read-only **Model Context Protocol (MCP)** server for short-term stock and ETF *
 
 1. **Finviz** — futures, breadth, snapshot, earnings API
 2. **Yahoo Finance** — chart API for quotes/futures fallback and headlines
-3. **MarketWatch** — premarket movers (optional; falls back to Finviz if blocked)
+3. **MarketWatch** — premarket movers (often blocked on cloud hosts with HTTP 401)
+4. **Yahoo Finance screeners** — day gainers/losers/actives when MarketWatch is blocked
 
 Caching: **5 minutes** for market data, **15 minutes** for daily briefings.
+
+**Note:** MarketWatch frequently returns **HTTP 401** from Heroku and other cloud servers due to bot protection. The server automatically falls back to Yahoo Finance, then Finviz. To skip MarketWatch entirely, set `MARKETWATCH_ENABLED=false` in Heroku config vars.
 
 ---
 
