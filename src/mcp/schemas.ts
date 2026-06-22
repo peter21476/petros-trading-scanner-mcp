@@ -12,9 +12,16 @@ export const watchlistSignalsInputSchema = z.object({
   symbols: z.array(z.string().min(1).max(10)).min(1).max(30),
 });
 
+export const portfolioPositionSchema = z.object({
+  symbol: z.string().min(1).max(10),
+  costBasis: z.number().positive().optional(),
+  currentValue: z.number().positive().optional(),
+});
+
 export const dailyBriefingInputSchema = z.object({
   focusSymbols: z.array(z.string().min(1).max(10)).min(1).max(30),
   portfolioContext: z.string().max(500).optional(),
+  positions: z.array(portfolioPositionSchema).max(20).optional(),
 });
 
 export type PremarketMoversInput = z.infer<typeof premarketMoversInputSchema>;

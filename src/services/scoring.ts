@@ -3,6 +3,10 @@ import {
   type DailyBriefingResponse,
   type FuturesResponse,
   type MarketBreadth,
+  type PortfolioNote,
+  type PortfolioPosition,
+  type SemiconductorStrengthResponse,
+  type SemiconductorSymbolDetail,
   type SnapshotStock,
   type WatchlistSignal,
   type YahooQuote,
@@ -13,6 +17,7 @@ export type MarketBias = "bullish" | "neutral" | "bearish";
 export interface BiasResult {
   bias: MarketBias;
   score: number;
+  confidence: number;
   reasons: string[];
 }
 
@@ -20,12 +25,34 @@ export interface SemiconductorStrength {
   strength: "strong" | "mixed" | "weak";
   positiveCount: number;
   totalChecked: number;
+  leaderSymbols: string[];
+  laggardSymbols: string[];
   leaders: string[];
   laggards: string[];
+  sectorScore: number;
+  bias: MarketBias;
+  confidence: number;
+  symbolDetails: SemiconductorSymbolDetail[];
 }
 
 function clampScore(value: number): number {
   return Math.max(0, Math.min(10, Number(value.toFixed(1))));
+}
+
+export function computeBiasConfidence(score: number, reasonCount: number): number {
+  const distance = Math.abs(score - 5);
+  const base = distance * 20 + 32;
+  const agreementBoost = Math.min(18, reasonCount * 4);
+  return Math.min(100, Math.round(base + agreementBoost));
+}
+
+export function biasLabelWithConfidence(bias: MarketBias, confidence: number): string {
+  const intensity =
+    confidence >= 75 ? "Strongly" : confidence >= 55 ? "Moderately" : "Slightly";
+  if (bias === "neutral") {
+    return "Neutral";
+  }
+  return `${intensity} ${bias}`;
 }
 
 export function computeMarketBias(
@@ -75,40 +102,66 @@ export function computeMarketBias(
     bias = "bearish";
   }
 
-  return { bias, score, reasons };
+  return {
+    bias,
+    score,
+    confidence: computeBiasConfidence(score, reasons.length),
+    reasons,
+  };
 }
 
 export function computeSemiconductorStrength(
   quotes: Map<string, YahooQuote>,
   majorNews: SnapshotStock[],
 ): SemiconductorStrength {
+  const leaderSymbols: string[] = [];
+  const laggardSymbols: string[] = [];
   const leaders: string[] = [];
   const laggards: string[] = [];
+  const symbolDetails: SemiconductorSymbolDetail[] = [];
   let positiveCount = 0;
   let totalChecked = 0;
+  let scoreSum = 0;
 
   const majorNewsMap = new Map(
-    majorNews.map((item) => [item.symbol.toUpperCase(), item.changePercent ?? 0]),
+    majorNews.map((item) => [item.symbol.toUpperCase(), item]),
   );
 
   for (const symbol of SEMICONDUCTOR_SYMBOLS) {
     const quote = quotes.get(symbol);
-    const newsChange = majorNewsMap.get(symbol);
+    const newsItem = majorNewsMap.get(symbol);
+    const newsChange = newsItem?.changePercent ?? null;
     const changePercent =
       quote?.preMarketChangePercent ??
       quote?.changePercent ??
       newsChange ??
       null;
 
+    const dataSource = quote
+      ? "Yahoo Finance"
+      : newsChange != null
+        ? "Finviz major news"
+        : "unavailable";
+
+    symbolDetails.push({
+      symbol,
+      changePercent,
+      dataSource,
+    });
+
     if (changePercent == null) {
       continue;
     }
 
     totalChecked += 1;
+    scoreSum += changePercent;
+
     if (changePercent > 0) {
       positiveCount += 1;
+      leaderSymbols.push(symbol);
       leaders.push(`${symbol} +${changePercent.toFixed(2)}%`);
     } else if (changePercent < 0) {
+      laggardSymbols.push(symbol);
       laggards.push(`${symbol} ${changePercent.toFixed(2)}%`);
     }
   }
@@ -116,11 +169,159 @@ export function computeSemiconductorStrength(
   let strength: SemiconductorStrength["strength"] = "mixed";
   if (positiveCount >= 5) {
     strength = "strong";
-  } else if (totalChecked > 0 && positiveCount <= 2 && laggards.length >= 5) {
+  } else if (totalChecked > 0 && positiveCount <= 2 && laggardSymbols.length >= 5) {
     strength = "weak";
   }
 
-  return { strength, positiveCount, totalChecked, leaders, laggards };
+  let sectorScore = 5;
+  if (totalChecked > 0) {
+    const averageChange = scoreSum / totalChecked;
+    sectorScore = clampScore(5 + averageChange / 2);
+    if (strength === "strong") {
+      sectorScore = clampScore(Math.max(sectorScore, 7.5));
+    } else if (strength === "weak") {
+      sectorScore = clampScore(Math.min(sectorScore, 3.5));
+    }
+  }
+
+  let bias: MarketBias = "neutral";
+  if (sectorScore >= 6.5) {
+    bias = "bullish";
+  } else if (sectorScore <= 4) {
+    bias = "bearish";
+  }
+
+  const confidence = computeBiasConfidence(
+    sectorScore,
+    positiveCount + laggardSymbols.length,
+  );
+
+  return {
+    strength,
+    positiveCount,
+    totalChecked,
+    leaderSymbols,
+    laggardSymbols,
+    leaders,
+    laggards,
+    sectorScore,
+    bias,
+    confidence,
+    symbolDetails,
+  };
+}
+
+export function buildSemiconductorSummary(strength: SemiconductorStrength): string {
+  if (strength.strength === "strong") {
+    return `Semiconductors outperforming market with ${strength.positiveCount}/${strength.totalChecked} tracked names positive.`;
+  }
+  if (strength.strength === "weak") {
+    return `Semiconductor weakness with ${strength.laggardSymbols.length}/${strength.totalChecked} tracked names negative.`;
+  }
+  if (strength.leaderSymbols.length > 0) {
+    return `Mixed semiconductor tape; leaders include ${strength.leaderSymbols.slice(0, 3).join(", ")}.`;
+  }
+  return "Semiconductor strength mixed with limited live quote coverage.";
+}
+
+export function toSemiconductorStrengthResponse(
+  strength: SemiconductorStrength,
+  source: string,
+  warnings: string[] = [],
+): SemiconductorStrengthResponse {
+  return {
+    timestamp: new Date().toISOString(),
+    source,
+    warnings,
+    sectorScore: strength.sectorScore,
+    bias: strength.bias,
+    confidence: strength.confidence,
+    leaders: strength.leaderSymbols,
+    laggards: strength.laggardSymbols,
+    summary: buildSemiconductorSummary(strength),
+    symbols: strength.symbolDetails,
+  };
+}
+
+export function buildPortfolioNotes(input: {
+  positions?: PortfolioPosition[];
+  portfolioContext?: string;
+  semiconductorStrength: SemiconductorStrength;
+  marketBias: BiasResult;
+  watchlistSignals: WatchlistSignal[];
+}): PortfolioNote[] {
+  const notes: PortfolioNote[] = [];
+  const positions = input.positions ?? [];
+
+  for (const position of positions) {
+    const symbol = position.symbol.toUpperCase();
+    const signal = input.watchlistSignals.find((item) => item.symbol === symbol);
+    const pnlPercent =
+      position.costBasis != null &&
+      position.currentValue != null &&
+      position.costBasis > 0
+        ? Number(
+            (
+              ((position.currentValue - position.costBasis) / position.costBasis) *
+              100
+            ).toFixed(2),
+          )
+        : null;
+
+    let thesisStatus: PortfolioNote["thesisStatus"] = "mixed";
+    let note = `${symbol} position noted`;
+
+    const isSoxl = symbol === "SOXL";
+    const semiStrong = input.semiconductorStrength.strength === "strong";
+    const semiWeak = input.semiconductorStrength.strength === "weak";
+
+    if (isSoxl) {
+      if (semiStrong && input.marketBias.bias !== "bearish") {
+        thesisStatus = "intact";
+        note =
+          "Semiconductor strength remains positive. Current SOXL thesis remains intact.";
+      } else if (semiWeak && input.marketBias.bias === "bearish") {
+        thesisStatus = "weakened";
+        note =
+          "Semiconductor weakness and bearish market bias weaken the SOXL thesis.";
+      } else {
+        thesisStatus = "mixed";
+        note =
+          "SOXL thesis is mixed as semiconductor strength and market bias are not fully aligned.";
+      }
+    } else if (signal?.bias === "bullish" && semiStrong) {
+      thesisStatus = "intact";
+      note = `${symbol} aligns with strong semiconductor leadership and bullish watchlist signal.`;
+    } else if (signal?.bias === "bearish" || semiWeak) {
+      thesisStatus = "weakened";
+      note = `${symbol} faces weaker sector or symbol-level signals.`;
+    } else {
+      thesisStatus = "mixed";
+      note = `${symbol} setup is mixed based on current sector and symbol signals.`;
+    }
+
+    if (pnlPercent != null) {
+      note += ` Position P/L: ${pnlPercent >= 0 ? "+" : ""}${pnlPercent}% vs cost basis.`;
+    }
+
+    notes.push({
+      symbol,
+      note,
+      pnlPercent,
+      thesisStatus,
+    });
+  }
+
+  if (notes.length === 0 && input.portfolioContext) {
+    notes.push({
+      symbol: "PORTFOLIO",
+      note: input.portfolioContext,
+      pnlPercent: null,
+      thesisStatus: input.semiconductorStrength.strength === "strong" ? "intact" : "mixed",
+    });
+  }
+
+  return notes;
 }
 
 export function scoreWatchlistSymbol(input: {
@@ -263,7 +464,9 @@ export function buildSectorNotes(
   const semiDetail =
     semiconductorStrength.leaders.length > 0
       ? ` Leaders: ${semiconductorStrength.leaders.slice(0, 4).join(", ")}.`
-      : "";
+      : semiconductorStrength.leaderSymbols.length > 0
+        ? ` Leaders: ${semiconductorStrength.leaderSymbols.slice(0, 4).join(", ")}.`
+        : "";
 
   const crudeChange = futures.crudeOil.changePercent;
   const energyLabel =

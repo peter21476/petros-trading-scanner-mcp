@@ -6,11 +6,14 @@ import {
   snapshotToMover,
 } from "./marketwatch.js";
 import {
+  buildPortfolioNotes,
   buildSectorNotes,
   buildSuggestedQuestions,
+  biasLabelWithConfidence,
   computeMarketBias,
   computeSemiconductorStrength,
   scoreWatchlistSymbol,
+  toSemiconductorStrengthResponse,
 } from "./scoring.js";
 import {
   fetchYahooFutures,
@@ -27,9 +30,116 @@ import {
   type FinvizSnapshotResponse,
   type FuturesResponse,
   type MarketBreadthResponse,
+  type NewsItem,
   type PremarketMoversResponse,
+  type SemiconductorStrengthResponse,
   type WatchlistSignalsResponse,
 } from "../types/market.js";
+import { enrichHeadline } from "../utils/newsAnalysis.js";
+import type { FinvizHomepageData } from "../types/market.js";
+
+import type { SemiconductorStrength } from "./scoring.js";
+
+function semiResultToStrength(
+  semiResult: SemiconductorStrengthResponse,
+): SemiconductorStrength {
+  return {
+    strength:
+      semiResult.sectorScore >= 7
+        ? "strong"
+        : semiResult.sectorScore <= 4
+          ? "weak"
+          : "mixed",
+    positiveCount: semiResult.leaders.length,
+    totalChecked: semiResult.symbols.filter((item) => item.changePercent != null).length,
+    leaderSymbols: semiResult.leaders,
+    laggardSymbols: semiResult.laggards,
+    leaders: semiResult.symbols
+      .filter((item) => (item.changePercent ?? 0) > 0)
+      .map((item) => `${item.symbol} +${item.changePercent!.toFixed(2)}%`),
+    laggards: semiResult.symbols
+      .filter((item) => (item.changePercent ?? 0) < 0)
+      .map((item) => `${item.symbol} ${item.changePercent!.toFixed(2)}%`),
+    sectorScore: semiResult.sectorScore,
+    bias: semiResult.bias,
+    confidence: semiResult.confidence,
+    symbolDetails: semiResult.symbols,
+  };
+}
+
+function buildBriefingNews(finviz: FinvizHomepageData | null): NewsItem[] {
+  const news: NewsItem[] = [];
+
+  if (finviz?.marketSummaryHeadline) {
+    const enriched = enrichHeadline(finviz.marketSummaryHeadline, {
+      finvizSentiment:
+        finviz.marketSummarySentiment === "negative"
+          ? "bad"
+          : finviz.marketSummarySentiment === "positive"
+            ? "good"
+            : undefined,
+      source: "Finviz market summary",
+    });
+    news.push({
+      headline: enriched.headline,
+      impact: enriched.impact,
+      sentiment: enriched.sentiment,
+      source: enriched.source,
+    });
+  }
+
+  for (const headline of finviz?.headlines ?? []) {
+    news.push({
+      headline: headline.headline ?? headline.title,
+      impact: headline.impact ?? "low",
+      sentiment: headline.sentiment ?? "neutral",
+      source: headline.source ?? "Finviz",
+      url: headline.url,
+      time: headline.time,
+    });
+  }
+
+  return news
+    .sort((a, b) => {
+      const impactRank = { high: 0, medium: 1, low: 2 };
+      return impactRank[a.impact] - impactRank[b.impact];
+    })
+    .slice(0, 12);
+}
+
+export async function getSemiconductorStrength(): Promise<SemiconductorStrengthResponse> {
+  return getCached("tool:semiconductor", CACHE_TTL.MARKET_DATA_MS, async () => {
+    const warnings: string[] = [];
+    const finviz = await safeFetchFinvizHomepage();
+    if (finviz.warning) {
+      warnings.push(finviz.warning);
+    }
+
+    const quotes = await fetchYahooQuotes([...SEMICONDUCTOR_SYMBOLS]);
+    const sources = new Set<string>();
+    if (quotes.size > 0) {
+      sources.add("Yahoo Finance");
+    }
+    if ((finviz.data?.majorNews.length ?? 0) > 0) {
+      sources.add("Finviz major news");
+    }
+
+    if (quotes.size === 0 && !finviz.data?.majorNews.length) {
+      warnings.push("Limited semiconductor quote coverage from all sources");
+    }
+
+    const strength = computeSemiconductorStrength(
+      quotes,
+      finviz.data?.majorNews ?? [],
+    );
+
+    return toSemiconductorStrengthResponse(
+      strength,
+      sources.size > 0 ? [...sources].join(" + ") : "Finviz",
+      warnings,
+    );
+  });
+}
 
 function mergeFutures(
   primary: FuturesResponse["futures"],
@@ -323,18 +433,24 @@ export async function getWatchlistSignals(
 export async function getDailyBriefing(input: {
   focusSymbols: string[];
   portfolioContext?: string;
+  positions?: Array<{
+    symbol: string;
+    costBasis?: number;
+    currentValue?: number;
+  }>;
 }): Promise<DailyBriefingResponse> {
-  const cacheKey = `tool:briefing:${input.focusSymbols.join(",")}:${input.portfolioContext ?? ""}`;
+  const cacheKey = `tool:briefing:${input.focusSymbols.join(",")}:${input.portfolioContext ?? ""}:${JSON.stringify(input.positions ?? [])}`;
   return getCached(cacheKey, CACHE_TTL.DAILY_REPORT_MS, async () => {
     const warnings: string[] = [];
 
-    const [futuresResult, premarket, breadthResult, finviz, watchlistSignals] =
+    const [futuresResult, premarket, breadthResult, finviz, watchlistSignals, semiResult] =
       await Promise.all([
         getFutures(),
         getPremarketMovers(15),
         getMarketBreadth(),
         safeFetchFinvizHomepage(),
         getWatchlistSignals(input.focusSymbols),
+        getSemiconductorStrength(),
       ]);
 
     warnings.push(...(futuresResult.warnings ?? []));
@@ -342,18 +458,16 @@ export async function getDailyBriefing(input: {
     warnings.push(...(breadthResult.warnings ?? []));
     if (finviz.warning) warnings.push(finviz.warning);
     warnings.push(...(watchlistSignals.warnings ?? []));
+    warnings.push(...(semiResult.warnings ?? []));
 
-    const quotes = await fetchYahooQuotes([...SEMICONDUCTOR_SYMBOLS]);
-    const semiconductorStrength = computeSemiconductorStrength(
-      quotes,
-      finviz.data?.majorNews ?? [],
-    );
     const marketBiasResult = computeMarketBias(
       futuresResult.futures,
       breadthResult.breadth,
     );
 
+    const news = buildBriefingNews(finviz.data ?? null);
     const keyDrivers: string[] = [];
+
     if (finviz.data?.marketSummaryHeadline) {
       keyDrivers.push(finviz.data.marketSummaryHeadline);
     }
@@ -367,9 +481,19 @@ export async function getDailyBriefing(input: {
         `Crude oil futures ${futuresResult.futures.crudeOil.changePercent >= 0 ? "+" : ""}${futuresResult.futures.crudeOil.changePercent.toFixed(2)}%`,
       );
     }
-    if (finviz.data?.headlines[0]?.title) {
-      keyDrivers.push(finviz.data.headlines[0].title);
+    for (const item of news.filter((entry) => entry.impact === "high").slice(0, 3)) {
+      keyDrivers.push(item.headline);
     }
+
+    const semiStrength = semiResultToStrength(semiResult);
+
+    const portfolioNotes = buildPortfolioNotes({
+      positions: input.positions,
+      portfolioContext: input.portfolioContext,
+      semiconductorStrength: semiStrength,
+      marketBias: marketBiasResult,
+      watchlistSignals: watchlistSignals.signals,
+    });
 
     const risks: string[] = [
       "Data is for research only; quotes may be delayed.",
@@ -378,30 +502,52 @@ export async function getDailyBriefing(input: {
     if (marketBiasResult.bias === "bearish") {
       risks.push("Bearish futures/breadth backdrop may increase downside volatility.");
     }
+    if (news.some((item) => item.impact === "high" && item.sentiment === "negative")) {
+      risks.push("High-impact negative headlines may increase near-term volatility.");
+    }
     if (input.portfolioContext) {
       risks.push(`Portfolio context noted: ${input.portfolioContext}`);
     }
 
     const summaryParts = [
-      `Market bias is ${marketBiasResult.bias}.`,
+      `${biasLabelWithConfidence(marketBiasResult.bias, marketBiasResult.confidence)} market bias (${marketBiasResult.confidence}% confidence).`,
       `Nasdaq 100 futures ${futuresResult.futures.nasdaq100.changePercent ?? "n/a"}%.`,
-      `Semiconductor strength: ${semiconductorStrength.strength}.`,
+      semiResult.summary,
     ];
 
     return {
       timestamp: new Date().toISOString(),
       marketBias: marketBiasResult.bias,
+      confidence: marketBiasResult.confidence,
       summary: summaryParts.join(" "),
+      sources: {
+        futuresSource: futuresResult.source,
+        premarketSource: premarket.source,
+        breadthSource: breadthResult.source,
+        newsSource: "Finviz",
+        semiconductorSource: semiResult.source,
+        watchlistSource: "Finviz + Yahoo Finance",
+      },
       keyDrivers,
+      news,
       futures: futuresResult.futures,
       premarketMovers: premarket,
       breadth: breadthResult.breadth,
       sectorNotes: buildSectorNotes(
-        semiconductorStrength,
+        semiStrength,
         futuresResult.futures,
         finviz.data?.majorNews ?? [],
       ),
       watchlistSignals: watchlistSignals.signals,
+      semiconductorStrength: {
+        sectorScore: semiResult.sectorScore,
+        bias: semiResult.bias,
+        confidence: semiResult.confidence,
+        leaders: semiResult.leaders,
+        laggards: semiResult.laggards,
+        summary: semiResult.summary,
+      },
+      portfolioNotes,
       risks,
       suggestedQuestions: buildSuggestedQuestions(
         input.focusSymbols,

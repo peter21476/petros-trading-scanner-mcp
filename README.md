@@ -14,7 +14,8 @@ Read-only **Model Context Protocol (MCP)** server for short-term stock and ETF *
 | `get_finviz_snapshot` | Homepage-style snapshot: movers, news, headlines, breadth, futures |
 | `get_earnings_calendar` | Upcoming earnings (Finviz API) |
 | `get_watchlist_signals` | Transparent 0–10 scores, bias, reasons, risk flags |
-| `get_daily_briefing` | Full briefing for ChatGPT with sector notes and suggested questions |
+| `get_semiconductor_strength` | Sector score, bias, confidence, leaders/laggards for 11 semi names (SOXL workflow) |
+| `get_daily_briefing` | Full briefing with source attribution, confidence, news severity, portfolio notes |
 
 ### Data sources (free/public)
 
@@ -105,6 +106,7 @@ The server implements **Streamable HTTP** (`POST /mcp`) compatible with ChatGPT 
 - "Check futures and premarket movers."
 - "Analyze SOXL based on semiconductor strength."
 - "Give me a market bias for today."
+- "Run semiconductor strength for my SOXL workflow."
 - "Run watchlist signals for SOXL, MU, NVDA, AMD, AVGO, INTC, MRVL, WDC."
 
 ### Example: daily briefing tool input
@@ -112,9 +114,24 @@ The server implements **Streamable HTTP** (`POST /mcp`) compatible with ChatGPT 
 ```json
 {
   "focusSymbols": ["SOXL", "MU", "NVDA", "AMD", "AVGO", "INTC", "MRVL", "WDC"],
-  "portfolioContext": "Optional free text, e.g. holding SOXL from $50 starter account"
+  "portfolioContext": "Holding SOXL from starter account",
+  "positions": [
+    {
+      "symbol": "SOXL",
+      "costBasis": 50,
+      "currentValue": 51.17
+    }
+  ]
 }
 ```
+
+The briefing now includes:
+
+- `sources.futuresSource`, `sources.premarketSource`, `sources.breadthSource`, etc.
+- `confidence` (0–100) alongside `marketBias`
+- `news[]` with `impact` (`high` | `medium` | `low`) and `sentiment`
+- `portfolioNotes[]` with thesis status per position
+- `semiconductorStrength` summary block
 
 ---
 
@@ -125,6 +142,8 @@ Market bias uses:
 - Nasdaq 100 futures ±0.5%
 - S&P 500 futures ±0.3%
 - Advancing/declining breadth above 55%
+
+**Confidence** (0–100) increases as the bias score moves away from neutral and more signals agree. Example: `marketBias: "bearish"` with `confidence: 72` = moderately-to-strongly bearish, not a mild lean.
 
 Semiconductor strength tracks NVDA, AMD, MU, AVGO, INTC, MRVL, WDC, TSM, AMAT, LRCX, SMCI. **Strong** if 5+ are positive premarket or in major news.
 

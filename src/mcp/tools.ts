@@ -12,6 +12,7 @@ import {
   getFutures,
   getMarketBreadth,
   getPremarketMovers,
+  getSemiconductorStrength,
   getWatchlistSignals,
 } from "../services/marketData.js";
 
@@ -139,13 +140,30 @@ export function registerTools(server: McpServer): void {
   );
 
   server.registerTool(
+    "get_semiconductor_strength",
+    {
+      description:
+        "Return semiconductor sector strength for NVDA, AMD, MU, AVGO, INTC, MRVL, WDC, TSM, AMAT, LRCX, SMCI with sector score, bias, confidence, leaders, laggards, and summary. Useful for SOXL workflow.",
+      inputSchema: {},
+    },
+    async () => {
+      try {
+        return jsonResult(await getSemiconductorStrength());
+      } catch (error) {
+        return errorResult(`get_semiconductor_strength failed: ${String(error)}`);
+      }
+    },
+  );
+
+  server.registerTool(
     "get_daily_briefing",
     {
       description:
-        "Return a complete market briefing: bias, futures, premarket movers, breadth, sector notes, watchlist signals, risks, and suggested follow-up questions.",
+        "Return a complete market briefing with per-section source attribution, market bias confidence, ranked news with impact/sentiment, semiconductor strength, portfolio-aware notes, and suggested follow-up questions.",
       inputSchema: {
         focusSymbols: dailyBriefingInputSchema.shape.focusSymbols,
         portfolioContext: dailyBriefingInputSchema.shape.portfolioContext,
+        positions: dailyBriefingInputSchema.shape.positions,
       },
     },
     async (input) => {

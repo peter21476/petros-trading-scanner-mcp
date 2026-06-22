@@ -72,6 +72,61 @@ export interface HeadlineItem {
   time?: string;
   title: string;
   url?: string;
+  headline?: string;
+  impact?: "high" | "medium" | "low";
+  sentiment?: "positive" | "negative" | "neutral";
+  source?: string;
+}
+
+export interface NewsItem {
+  headline: string;
+  impact: "high" | "medium" | "low";
+  sentiment: "positive" | "negative" | "neutral";
+  source?: string;
+  url?: string;
+  time?: string;
+}
+
+export interface BriefingSources {
+  futuresSource: string;
+  premarketSource: string;
+  breadthSource: string;
+  newsSource: string;
+  semiconductorSource: string;
+  watchlistSource: string;
+  earningsSource?: string;
+}
+
+export interface PortfolioPosition {
+  symbol: string;
+  costBasis?: number;
+  currentValue?: number;
+}
+
+export interface PortfolioNote {
+  symbol: string;
+  note: string;
+  pnlPercent?: number | null;
+  thesisStatus: "intact" | "mixed" | "weakened";
+}
+
+export interface SemiconductorSymbolDetail {
+  symbol: string;
+  changePercent: number | null;
+  dataSource: string;
+}
+
+export interface SemiconductorStrengthResponse {
+  timestamp: string;
+  source: string;
+  warnings?: string[];
+  sectorScore: number;
+  bias: "bullish" | "neutral" | "bearish";
+  confidence: number;
+  leaders: string[];
+  laggards: string[];
+  summary: string;
+  symbols: SemiconductorSymbolDetail[];
 }
 
 export interface FinvizSnapshotResponse {
@@ -129,13 +184,21 @@ export interface SectorNotes {
 export interface DailyBriefingResponse {
   timestamp: string;
   marketBias: "bullish" | "neutral" | "bearish";
+  confidence: number;
   summary: string;
+  sources: BriefingSources;
   keyDrivers: string[];
+  news: NewsItem[];
   futures: FuturesResponse["futures"];
   premarketMovers: PremarketMoversResponse;
   breadth: MarketBreadth;
   sectorNotes: SectorNotes;
   watchlistSignals: WatchlistSignal[];
+  semiconductorStrength: Pick<
+    SemiconductorStrengthResponse,
+    "sectorScore" | "bias" | "confidence" | "leaders" | "laggards" | "summary"
+  >;
+  portfolioNotes: PortfolioNote[];
   risks: string[];
   suggestedQuestions: string[];
   warnings?: string[];
@@ -162,6 +225,7 @@ export interface FinvizHomepageData {
   majorNews: SnapshotStock[];
   headlines: HeadlineItem[];
   marketSummaryHeadline?: string;
+  marketSummarySentiment?: "positive" | "negative" | "neutral";
 }
 
 export const SEMICONDUCTOR_SYMBOLS = [

@@ -12,6 +12,7 @@ import {
   type SnapshotStock,
 } from "../types/market.js";
 import { logger } from "../utils/logger.js";
+import { enrichHeadline } from "../utils/newsAnalysis.js";
 
 const FINVIZ_HOME_URL = "https://finviz.com/";
 
@@ -146,35 +147,60 @@ function parseHeadlines(html: string): HeadlineItem[] {
     if (!title) {
       return;
     }
-    headlines.push({
+
+    const enriched = enrichHeadline(title, {
       time: $(row).find(".nn-date").text().trim() || undefined,
-      title,
       url: $(row).find("a.nn-tab-link").attr("href") ?? undefined,
+      source: "Finviz",
+    });
+
+    headlines.push({
+      title,
+      headline: enriched.headline,
+      impact: enriched.impact,
+      sentiment: enriched.sentiment,
+      time: enriched.time,
+      url: enriched.url,
+      source: enriched.source,
     });
   });
 
   return headlines;
 }
 
-function parseMarketSummaryHeadline(html: string): string | undefined {
+function parseMarketSummary(html: string): {
+  headline?: string;
+  sentiment?: "positive" | "negative" | "neutral";
+} {
   const match = html.match(
     /id="why-stock-moving-init-data"[^>]*>(\{.*?\})<\/script>/s,
   );
   if (!match) {
-    return undefined;
+    return {};
   }
 
   try {
     const data = JSON.parse(match[1]) as {
-      whyMoving?: { headline?: string };
+      whyMoving?: { headline?: string; sentiment?: string };
     };
-    return data.whyMoving?.headline;
+    const headline = data.whyMoving?.headline;
+    const rawSentiment = data.whyMoving?.sentiment;
+    const sentiment =
+      rawSentiment === "bad"
+        ? "negative"
+        : rawSentiment === "good"
+          ? "positive"
+          : "neutral";
+
+    return { headline, sentiment };
   } catch {
-    return undefined;
+    return {};
   }
 }
 
 function parseHomepageHtml(html: string): FinvizHomepageData {
+  const marketSummary = parseMarketSummary(html);
+
   return {
     futures: parseFuturesTable(html),
     breadth: parseBreadthSection(html),
@@ -192,7 +218,8 @@ function parseHomepageHtml(html: string): FinvizHomepageData {
     ),
     majorNews: parseMajorNews(html),
     headlines: parseHeadlines(html),
-    marketSummaryHeadline: parseMarketSummaryHeadline(html),
+    marketSummaryHeadline: marketSummary.headline,
+    marketSummarySentiment: marketSummary.sentiment,
   };
 }
 
