@@ -398,6 +398,9 @@ export async function getWatchlistSignals(
     const quoteDiagnostics = {
       yahooBatchResolved: quoteResult.diagnostics.yahooBatchResolved,
       yahooBatchRequested: quoteResult.diagnostics.yahooBatchRequested,
+      yahooSkipped: quoteResult.diagnostics.yahooSkipped,
+      providersAttempted: quoteResult.diagnostics.providersAttempted,
+      rateLimitedSources: quoteResult.diagnostics.rateLimitedSources,
       bySourceQuality: countBySourceQuality(
         focusUpper
           .map((symbol) => quotes.get(symbol))
@@ -405,9 +408,13 @@ export async function getWatchlistSignals(
       ),
     };
 
-    if (quoteResult.diagnostics.yahooBatchResolved === 0) {
+    if (quoteResult.diagnostics.yahooSkipped) {
       warnings.push(
-        "Yahoo Finance batch returned no data — quotes may be Nasdaq-only unless individual Yahoo corroboration succeeds",
+        "Yahoo Finance skipped (rate-limited for 30 minutes after HTTP 429)",
+      );
+    } else if (quoteResult.diagnostics.yahooBatchResolved === 0) {
+      warnings.push(
+        "Yahoo Finance batch returned no data; Nasdaq or Finviz fallback used",
       );
     }
 
@@ -426,14 +433,15 @@ export async function getWatchlistSignals(
       majorNews: finviz.data?.majorNews ?? [],
     };
 
-    const signals = await Promise.all(
-      symbols.map(async (symbol) => {
-        const upper = symbol.toUpperCase();
-        const quote = quotes.get(upper) ?? null;
-        const headline = await fetchYahooNewsHeadline(upper);
-        const finvizLists = finvizListsForSymbol(upper, snapshot);
+    const signals = [];
+    for (const symbol of symbols) {
+      const upper = symbol.toUpperCase();
+      const quote = quotes.get(upper) ?? null;
+      const headline = await fetchYahooNewsHeadline(upper);
+      const finvizLists = finvizListsForSymbol(upper, snapshot);
 
-        return scoreWatchlistSymbol({
+      signals.push(
+        scoreWatchlistSymbol({
           symbol: upper,
           quote,
           finvizLists,
@@ -441,9 +449,9 @@ export async function getWatchlistSignals(
           marketBias,
           semiconductorStrength,
           nasdaqFuturesChange: futuresResult.futures.nasdaq100.changePercent,
-        });
-      }),
-    );
+        }),
+      );
+    }
 
     return {
       timestamp: new Date().toISOString(),
@@ -496,7 +504,9 @@ export async function getPositionReview(input: {
     });
     warnings.push(...quoteResult.warnings);
 
-    if (quoteResult.diagnostics.yahooBatchResolved === 0) {
+    if (quoteResult.diagnostics.yahooSkipped) {
+      warnings.push("Yahoo Finance skipped (rate-limited)");
+    } else if (quoteResult.diagnostics.yahooBatchResolved === 0) {
       warnings.push(
         "Yahoo Finance batch returned no data — quote confidence may be reduced",
       );

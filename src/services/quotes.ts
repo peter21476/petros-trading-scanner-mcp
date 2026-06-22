@@ -1,45 +1,31 @@
 import { CACHE_TTL, getCached } from "./cache.js";
 import { safeFetchJson } from "./http.js";
-import { fetchYahooQuote } from "./yahoo.js";
+import {
+  fetchAlphaVantageQuote,
+  fetchAlphaVantageQuotes,
+  isAlphaVantageEnabled,
+} from "./alphaVantage.js";
+import {
+  fetchFinnhubQuote,
+  fetchFinnhubQuotes,
+  isFinnhubEnabled,
+} from "./finnhub.js";
+import { fetchYahooSparkQuote, fetchYahooSparkQuotes } from "./yahooSpark.js";
 import type { FinvizHomepageData, SnapshotStock, SourceQuality, YahooQuote } from "../types/market.js";
 import { parseNumber, parsePercent, parseVolume, signedChange } from "../utils/parseNumber.js";
 import { finalizeQuote } from "../utils/quoteValidation.js";
 import {
   countBySourceQuality,
+  isFinvizSource,
   isNasdaqSource,
-  isYahooSource,
+  isPrimaryApiSource,
   resolveSourceQuality,
   stampQuoteSourceQuality,
 } from "../utils/quoteConfidence.js";
+import { getRateLimitedSources, isYahooRateLimited } from "../utils/yahooRateLimit.js";
 import { logger } from "../utils/logger.js";
 
-const SPARK_BATCH_SIZE = 8;
-const QUOTE_RETRY_DELAY_MS = 600;
-const YAHOO_HOSTS = ["query1.finance.yahoo.com", "query2.finance.yahoo.com"] as const;
-
-interface YahooSparkMeta {
-  symbol?: string;
-  regularMarketPrice?: number;
-  chartPreviousClose?: number;
-  previousClose?: number;
-  preMarketPrice?: number;
-  regularMarketVolume?: number;
-  regularMarketTime?: number;
-  shortName?: string;
-  longName?: string;
-}
-
-interface YahooSparkResponse {
-  spark?: {
-    result?: Array<{
-      symbol?: string;
-      response?: Array<{
-        meta?: YahooSparkMeta;
-      }>;
-    }>;
-    error?: { description?: string };
-  };
-}
+const QUOTE_RETRY_DELAY_MS = 400;
 
 interface NasdaqQuoteResponse {
   data?: {
@@ -67,12 +53,6 @@ function parseNasdaqTimestamp(value?: string): string | null {
   return new Date(parsed).toISOString();
 }
 
-const NASDAQ_HEADERS = {
-  Accept: "application/json",
-  Origin: "https://www.nasdaq.com",
-  Referer: "https://www.nasdaq.com/",
-};
-
 export interface FinvizSnapshotContext {
   topGainers: SnapshotStock[];
   topLosers: SnapshotStock[];
@@ -84,178 +64,11 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function metaToQuote(meta: YahooSparkMeta): YahooQuote | null {
-  const symbol = meta.symbol?.toUpperCase();
-  if (!symbol) {
-    return null;
-  }
-
-  const price = meta.preMarketPrice ?? meta.regularMarketPrice ?? null;
-  const previousClose = meta.previousClose ?? meta.chartPreviousClose ?? null;
-
-  let change: number | null = null;
-  let changePercent: number | null = null;
-  let preMarketChangePercent: number | null = null;
-
-  if (price != null && previousClose != null && previousClose !== 0) {
-    change = Number((price - previousClose).toFixed(4));
-    changePercent = Number(((change / previousClose) * 100).toFixed(4));
-  }
-
-  if (
-    meta.preMarketPrice != null &&
-    previousClose != null &&
-    previousClose !== 0
-  ) {
-    preMarketChangePercent = Number(
-      (((meta.preMarketPrice - previousClose) / previousClose) * 100).toFixed(4),
-    );
-  }
-
-  if (price == null && changePercent == null) {
-    return null;
-  }
-
-  const asOf =
-    meta.regularMarketTime != null
-      ? new Date(meta.regularMarketTime * 1000).toISOString()
-      : null;
-
-  return finalizeQuote({
-    symbol,
-    price,
-    change,
-    changePercent,
-    previousClose,
-    preMarketPrice: meta.preMarketPrice ?? null,
-    preMarketChangePercent,
-    volume: meta.regularMarketVolume ?? null,
-    shortName: meta.shortName ?? meta.longName ?? symbol,
-    source: "Yahoo Finance",
-    asOf,
-    isDelayed: false,
-    multiSourceAgree: false,
-    fallbackOnly: false,
-  });
-}
-
-async function fetchYahooSparkChunk(
-  symbols: string[],
-  host: (typeof YAHOO_HOSTS)[number],
-): Promise<Map<string, YahooQuote>> {
-  const map = new Map<string, YahooQuote>();
-  if (symbols.length === 0) {
-    return map;
-  }
-
-  const joined = symbols.map((symbol) => encodeURIComponent(symbol)).join(",");
-  const url = `https://${host}/v7/finance/spark?symbols=${joined}&range=1d&interval=1d`;
-
-  const response = await fetch(url, {
-    headers: {
-      "User-Agent":
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      Accept: "application/json",
-    },
-  });
-
-  if (response.status === 429) {
-    throw new Error(`Yahoo spark rate limited on ${host}`);
-  }
-
-  if (!response.ok) {
-    logger.warn("Yahoo spark chunk failed", { host, status: response.status, symbols });
-    return map;
-  }
-
-  const data = (await response.json()) as YahooSparkResponse;
-  for (const item of data.spark?.result ?? []) {
-    const meta = item.response?.[0]?.meta;
-    if (!meta) {
-      continue;
-    }
-    const quote = metaToQuote(
-      { ...meta, symbol: meta.symbol ?? item.symbol },
-    );
-    if (quote) {
-      map.set(quote.symbol, quote);
-    }
-  }
-
-  return map;
-}
-
-async function fetchYahooSparkBatchRecursive(
-  symbols: string[],
-  depth = 0,
-): Promise<Map<string, YahooQuote>> {
-  const map = new Map<string, YahooQuote>();
-  if (symbols.length === 0) {
-    return map;
-  }
-
-  let rateLimited = false;
-
-  for (const host of YAHOO_HOSTS) {
-    try {
-      const chunkResult = await fetchYahooSparkChunk(symbols, host);
-      for (const [symbol, quote] of chunkResult) {
-        map.set(symbol, quote);
-      }
-      if (map.size > 0) {
-        return map;
-      }
-    } catch (error) {
-      if (String(error).includes("rate limited")) {
-        rateLimited = true;
-      }
-      logger.warn("Yahoo spark host failed", { host, error: String(error) });
-    }
-  }
-
-  if (rateLimited) {
-    return map;
-  }
-
-  if (symbols.length === 1 || depth >= 1) {
-    return map;
-  }
-
-  const midpoint = Math.ceil(symbols.length / 2);
-  const left = symbols.slice(0, midpoint);
-  const right = symbols.slice(midpoint);
-
-  await delay(QUOTE_RETRY_DELAY_MS);
-  const leftResult = await fetchYahooSparkBatchRecursive(left, depth + 1);
-  await delay(QUOTE_RETRY_DELAY_MS);
-  const rightResult = await fetchYahooSparkBatchRecursive(right, depth + 1);
-
-  for (const [symbol, quote] of leftResult) {
-    map.set(symbol, quote);
-  }
-  for (const [symbol, quote] of rightResult) {
-    map.set(symbol, quote);
-  }
-
-  return map;
-}
-
-async function fetchYahooSparkBatch(symbols: string[]): Promise<Map<string, YahooQuote>> {
-  const map = new Map<string, YahooQuote>();
-
-  for (let index = 0; index < symbols.length; index += SPARK_BATCH_SIZE) {
-    const chunk = symbols.slice(index, index + SPARK_BATCH_SIZE);
-    const chunkResult = await fetchYahooSparkBatchRecursive(chunk);
-    for (const [symbol, quote] of chunkResult) {
-      map.set(symbol, quote);
-    }
-    if (index + SPARK_BATCH_SIZE < symbols.length) {
-      await delay(QUOTE_RETRY_DELAY_MS);
-    }
-  }
-
-  return map;
-}
+const NASDAQ_HEADERS = {
+  Accept: "application/json",
+  Origin: "https://www.nasdaq.com",
+  Referer: "https://www.nasdaq.com/",
+};
 
 async function fetchNasdaqQuote(
   symbol: string,
@@ -308,6 +121,19 @@ async function fetchNasdaqQuoteWithFallback(symbol: string): Promise<YahooQuote 
   return fetchNasdaqQuote(symbol, "etf");
 }
 
+async function fetchNasdaqQuotes(symbols: string[]): Promise<Map<string, YahooQuote>> {
+  const map = new Map<string, YahooQuote>();
+  await Promise.all(
+    symbols.map(async (symbol) => {
+      const quote = await fetchNasdaqQuoteWithFallback(symbol);
+      if (quote) {
+        map.set(symbol.toUpperCase(), quote);
+      }
+    }),
+  );
+  return map;
+}
+
 function buildFinvizQuoteIndex(
   snapshot: FinvizSnapshotContext,
 ): Map<string, YahooQuote> {
@@ -344,7 +170,7 @@ function buildFinvizQuoteIndex(
         asOf: null,
         isDelayed: true,
         multiSourceAgree: false,
-        fallbackOnly: !isYahooSource(existing?.source),
+        fallbackOnly: true,
       }));
     }
   };
@@ -372,68 +198,6 @@ function finvizSnapshotFromHomepage(
   };
 }
 
-async function fetchMissingQuotesIndividually(
-  symbols: string[],
-): Promise<Map<string, YahooQuote>> {
-  const map = new Map<string, YahooQuote>();
-
-  for (const symbol of symbols) {
-    const yahooQuote = await fetchYahooQuote(symbol);
-    const nasdaqQuote = await fetchNasdaqQuoteWithFallback(symbol);
-    const quote =
-      mergeQuote(yahooQuote ?? undefined, nasdaqQuote ?? undefined) ??
-      yahooQuote ??
-      nasdaqQuote;
-
-    if (quote) {
-      map.set(symbol, quote);
-    }
-
-    if (symbols.indexOf(symbol) < symbols.length - 1) {
-      await delay(QUOTE_RETRY_DELAY_MS);
-    }
-  }
-
-  return map;
-}
-
-async function corroborateQuotes(
-  quotes: Map<string, YahooQuote>,
-  symbols: string[],
-): Promise<void> {
-  await Promise.all(
-    symbols.map(async (symbol) => {
-      const existing = quotes.get(symbol);
-      if (!existing?.price || existing.multiSourceAgree) {
-        return;
-      }
-
-      if (isYahooSource(existing.source)) {
-        const nasdaqQuote = await fetchNasdaqQuoteWithFallback(symbol);
-        if (!nasdaqQuote) {
-          return;
-        }
-        const merged = mergeQuote(existing, nasdaqQuote);
-        if (merged) {
-          quotes.set(symbol, merged);
-        }
-        return;
-      }
-
-      if (isNasdaqSource(existing.source)) {
-        const yahooQuote = await fetchYahooQuote(symbol);
-        if (!yahooQuote?.price) {
-          return;
-        }
-        const merged = mergeQuote(yahooQuote, existing);
-        if (merged) {
-          quotes.set(symbol, merged);
-        }
-      }
-    }),
-  );
-}
-
 function mergeQuote(
   primary: YahooQuote | undefined,
   fallback: YahooQuote | undefined,
@@ -451,8 +215,9 @@ function mergeQuote(
   const sourceQuality = resolveSourceQuality(primary, fallback);
 
   const preferPrimary =
-    primary.source?.includes("Yahoo") ||
-    (!fallback.source?.includes("Yahoo") && primary.price != null);
+    isPrimaryApiSource(primary.source) ||
+    (isNasdaqSource(primary.source) && !isPrimaryApiSource(fallback.source)) ||
+    (!isFinvizSource(primary.source) && isFinvizSource(fallback.source));
 
   const chosen = preferPrimary ? primary : fallback;
   const other = preferPrimary ? fallback : primary;
@@ -471,24 +236,101 @@ function mergeQuote(
     change = Number((price - previousClose).toFixed(4));
   }
 
-  return finalizeQuote({
-    symbol: chosen.symbol,
-    price,
-    change,
-    changePercent,
-    previousClose,
-    preMarketPrice: chosen.preMarketPrice ?? other.preMarketPrice,
-    preMarketChangePercent:
-      chosen.preMarketChangePercent ?? other.preMarketChangePercent,
-    volume: chosen.volume ?? other.volume,
-    shortName: chosen.shortName ?? other.shortName,
-    source: sourceQuality.source,
-    asOf: chosen.asOf ?? other.asOf ?? null,
-    isDelayed: chosen.isDelayed ?? other.isDelayed ?? false,
-    multiSourceAgree: sourceQuality.multiSourceAgree,
-    fallbackOnly: sourceQuality.fallbackOnly,
-    sourceQuality: sourceQuality.sourceQuality,
-  });
+  return stampQuoteSourceQuality(
+    finalizeQuote({
+      symbol: chosen.symbol,
+      price,
+      change,
+      changePercent,
+      previousClose,
+      preMarketPrice: chosen.preMarketPrice ?? other.preMarketPrice,
+      preMarketChangePercent:
+        chosen.preMarketChangePercent ?? other.preMarketChangePercent,
+      volume: chosen.volume ?? other.volume,
+      shortName: chosen.shortName ?? other.shortName,
+      source: sourceQuality.source,
+      asOf: chosen.asOf ?? other.asOf ?? null,
+      isDelayed: chosen.isDelayed ?? other.isDelayed ?? false,
+      multiSourceAgree: sourceQuality.multiSourceAgree,
+      fallbackOnly: sourceQuality.fallbackOnly,
+      sourceQuality: sourceQuality.sourceQuality,
+    }),
+  );
+}
+
+async function corroborateWithNasdaq(
+  quotes: Map<string, YahooQuote>,
+  symbols: string[],
+): Promise<void> {
+  for (const symbol of symbols) {
+    const existing = quotes.get(symbol);
+    if (!existing?.price || existing.multiSourceAgree) {
+      continue;
+    }
+
+    if (isNasdaqSource(existing.source) || isFinvizSource(existing.source)) {
+      continue;
+    }
+
+    const nasdaqQuote = await fetchNasdaqQuoteWithFallback(symbol);
+    if (!nasdaqQuote) {
+      continue;
+    }
+
+    const merged = mergeQuote(existing, nasdaqQuote);
+    if (merged) {
+      quotes.set(symbol, merged);
+    }
+  }
+}
+
+async function resolveSymbolQuote(
+  symbol: string,
+  finvizQuote: YahooQuote | undefined,
+  providersAttempted: Set<string>,
+): Promise<YahooQuote | null> {
+  const upper = symbol.toUpperCase();
+  let quote: YahooQuote | null = null;
+
+  if (isFinnhubEnabled()) {
+    providersAttempted.add("Finnhub");
+    quote = await fetchFinnhubQuote(upper);
+  }
+
+  if (!quote?.price && isAlphaVantageEnabled()) {
+    providersAttempted.add("Alpha Vantage");
+    quote = await fetchAlphaVantageQuote(upper);
+  }
+
+  if (!quote?.price) {
+    providersAttempted.add("Nasdaq");
+    quote = await fetchNasdaqQuoteWithFallback(upper);
+  }
+
+  if (!quote?.price && !isYahooRateLimited()) {
+    providersAttempted.add("Yahoo Finance");
+    quote = await fetchYahooSparkQuote(upper);
+  } else if (isYahooRateLimited()) {
+    providersAttempted.add("Yahoo Finance (skipped — rate-limited)");
+  }
+
+  if (!quote?.price && finvizQuote) {
+    providersAttempted.add("Finviz");
+    quote = finvizQuote;
+  }
+
+  if (!quote) {
+    return null;
+  }
+
+  if (!isNasdaqSource(quote.source) && !isFinvizSource(quote.source)) {
+    const nasdaqQuote = await fetchNasdaqQuoteWithFallback(upper);
+    if (nasdaqQuote) {
+      quote = mergeQuote(quote, nasdaqQuote) ?? quote;
+    }
+  }
+
+  return quote;
 }
 
 export async function fetchQuotes(
@@ -507,15 +349,19 @@ export async function fetchQuotes(
   diagnostics: {
     yahooBatchResolved: number;
     yahooBatchRequested: number;
+    yahooSkipped: boolean;
+    providersAttempted: string[];
+    rateLimitedSources: Array<{ source: string; until: string }>;
     bySourceQuality: Partial<Record<SourceQuality, number>>;
   };
 }> {
   const unique = [...new Set(symbols.map((symbol) => symbol.toUpperCase()))].sort();
-  const cacheKey = `quotes:resolved:${unique.join(",")}`;
+  const cacheKey = `quotes:resolved:${unique.join(",")}:v2`;
 
   return getCached(cacheKey, CACHE_TTL.MARKET_DATA_MS, async () => {
     const warnings: string[] = [];
     const resolved = new Map<string, YahooQuote>();
+    const providersAttempted = new Set<string>();
 
     const finvizContext =
       options?.finvizSnapshot && "topGainers" in options.finvizSnapshot
@@ -526,56 +372,107 @@ export async function fetchQuotes(
       ? buildFinvizQuoteIndex(finvizContext)
       : new Map<string, YahooQuote>();
 
-    const yahooBatch = await fetchYahooSparkBatch(unique);
-    if (yahooBatch.size === 0) {
-      warnings.push("Yahoo Finance batch quote lookup returned no data; trying Nasdaq fallback");
-    } else if (yahooBatch.size < unique.length) {
-      warnings.push(
-        `Yahoo Finance batch resolved ${yahooBatch.size}/${unique.length} symbols`,
-      );
+    let finnhubBatch = new Map<string, YahooQuote>();
+    if (isFinnhubEnabled()) {
+      providersAttempted.add("Finnhub");
+      finnhubBatch = await fetchFinnhubQuotes(unique);
+    }
+
+    let stillMissing = unique.filter((symbol) => !finnhubBatch.has(symbol));
+
+    let alphaBatch = new Map<string, YahooQuote>();
+    if (stillMissing.length > 0 && isAlphaVantageEnabled()) {
+      providersAttempted.add("Alpha Vantage");
+      alphaBatch = await fetchAlphaVantageQuotes(stillMissing);
+    }
+
+    stillMissing = stillMissing.filter((symbol) => !alphaBatch.has(symbol));
+
+    let nasdaqBatch = new Map<string, YahooQuote>();
+    if (stillMissing.length > 0) {
+      providersAttempted.add("Nasdaq");
+      nasdaqBatch = await fetchNasdaqQuotes(stillMissing);
+    }
+
+    stillMissing = stillMissing.filter((symbol) => !nasdaqBatch.has(symbol));
+
+    let yahooResult = {
+      quotes: new Map<string, YahooQuote>(),
+      yahooBatchResolved: 0,
+      yahooBatchRequested: stillMissing.length,
+      rateLimited: isYahooRateLimited(),
+      warnings: [] as string[],
+    };
+
+    if (stillMissing.length > 0) {
+      if (isYahooRateLimited()) {
+        providersAttempted.add("Yahoo Finance (skipped — rate-limited)");
+        yahooResult.warnings.push(
+          "Yahoo Finance skipped (rate-limited for 30 minutes after HTTP 429)",
+        );
+      } else {
+        providersAttempted.add("Yahoo Finance");
+        yahooResult = await fetchYahooSparkQuotes(stillMissing);
+      }
+      warnings.push(...yahooResult.warnings);
     }
 
     for (const symbol of unique) {
-      const merged = mergeQuote(yahooBatch.get(symbol), finvizQuotes.get(symbol));
+      const chainQuote =
+        finnhubBatch.get(symbol) ??
+        alphaBatch.get(symbol) ??
+        nasdaqBatch.get(symbol) ??
+        yahooResult.quotes.get(symbol);
+
+      const merged = mergeQuote(chainQuote, finvizQuotes.get(symbol));
       if (merged) {
         resolved.set(symbol, merged);
       }
     }
 
-    const stillMissing = unique.filter((symbol) => {
+    const unresolvedAfterBatch = unique.filter((symbol) => {
       const quote = resolved.get(symbol);
       return !quote || quote.price == null;
     });
 
-    if (stillMissing.length > 0) {
-      logger.info("Retrying missing quotes individually", {
-        symbols: stillMissing,
+    if (unresolvedAfterBatch.length > 0) {
+      logger.info("Resolving remaining quotes individually", {
+        symbols: unresolvedAfterBatch,
       });
-      const individual = await fetchMissingQuotesIndividually(stillMissing);
-      for (const symbol of stillMissing) {
-        const merged = mergeQuote(
-          individual.get(symbol) ?? resolved.get(symbol),
+
+      for (const symbol of unresolvedAfterBatch) {
+        const quote = await resolveSymbolQuote(
+          symbol,
           finvizQuotes.get(symbol),
+          providersAttempted,
         );
-        if (merged) {
-          resolved.set(symbol, merged);
+        if (quote) {
+          resolved.set(symbol, quote);
+        }
+        if (unresolvedAfterBatch.indexOf(symbol) < unresolvedAfterBatch.length - 1) {
+          await delay(QUOTE_RETRY_DELAY_MS);
         }
       }
     }
 
-    await corroborateQuotes(resolved, unique);
+    await corroborateWithNasdaq(resolved, unique);
 
     for (const symbol of unique) {
       const quote = resolved.get(symbol);
       if (!quote) {
         const finvizOnly = finvizQuotes.get(symbol);
         if (finvizOnly) {
-          resolved.set(symbol, finvizOnly);
+          providersAttempted.add("Finviz");
+          resolved.set(symbol, stampQuoteSourceQuality(finvizOnly));
         }
-      } else if (quote.price == null && quote.changePercent == null) {
+      } else if (quote.price == null) {
         const finvizOnly = finvizQuotes.get(symbol);
         if (finvizOnly) {
-          resolved.set(symbol, mergeQuote(finvizOnly, quote) ?? finvizOnly);
+          providersAttempted.add("Finviz");
+          resolved.set(
+            symbol,
+            mergeQuote(finvizOnly, quote) ?? stampQuoteSourceQuality(finvizOnly),
+          );
         }
       }
     }
@@ -586,19 +483,10 @@ export async function fetchQuotes(
     });
 
     if (unresolved.length > 0) {
-      warnings.push(
-        `Could not resolve live quotes for: ${unresolved.join(", ")}`,
-      );
+      warnings.push(`Could not resolve live quotes for: ${unresolved.join(", ")}`);
     }
 
-    if (resolved.size === 0 && finvizQuotes.size > 0) {
-      warnings.push("Using Finviz snapshot quotes as primary fallback");
-      for (const [symbol, quote] of finvizQuotes) {
-        if (unique.includes(symbol)) {
-          resolved.set(symbol, quote);
-        }
-      }
-    }
+    const rateLimitedSources = getRateLimitedSources();
 
     return {
       quotes: resolved,
@@ -609,8 +497,11 @@ export async function fetchQuotes(
         unresolved,
       },
       diagnostics: {
-        yahooBatchResolved: yahooBatch.size,
-        yahooBatchRequested: unique.length,
+        yahooBatchResolved: yahooResult.yahooBatchResolved,
+        yahooBatchRequested: yahooResult.yahooBatchRequested,
+        yahooSkipped: isYahooRateLimited(),
+        providersAttempted: [...providersAttempted],
+        rateLimitedSources,
         bySourceQuality: countBySourceQuality(resolved.values()),
       },
     };

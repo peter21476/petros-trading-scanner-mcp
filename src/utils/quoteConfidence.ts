@@ -2,6 +2,8 @@ import type { DataFreshness, SourceQuality, YahooQuote } from "../types/market.j
 
 const PRICE_AGREEMENT_TOLERANCE_PERCENT = 0.15;
 
+const PRIMARY_API_PREFIXES = ["Finnhub", "Alpha Vantage", "Yahoo Finance"] as const;
+
 export function pricesAgree(
   a: number | null | undefined,
   b: number | null | undefined,
@@ -24,10 +26,65 @@ export function isFinvizSource(source?: string | null): boolean {
   return source?.includes("Finviz") ?? false;
 }
 
+export function isFinnhubSource(source?: string | null): boolean {
+  return source?.startsWith("Finnhub") ?? false;
+}
+
+export function isAlphaVantageSource(source?: string | null): boolean {
+  return source?.startsWith("Alpha Vantage") ?? false;
+}
+
+export function isPrimaryApiSource(source?: string | null): boolean {
+  if (!source) {
+    return false;
+  }
+  return PRIMARY_API_PREFIXES.some((prefix) => source.startsWith(prefix));
+}
+
+function baseSourceLabel(source?: string | null): string {
+  if (!source) {
+    return "unknown";
+  }
+  if (isFinnhubSource(source)) {
+    return "Finnhub";
+  }
+  if (isAlphaVantageSource(source)) {
+    return "Alpha Vantage";
+  }
+  if (isYahooSource(source)) {
+    return "Yahoo Finance";
+  }
+  if (isNasdaqSource(source)) {
+    return "Nasdaq";
+  }
+  if (isFinvizSource(source)) {
+    return source.split(" + ").pop() ?? "Finviz";
+  }
+  return source;
+}
+
+function sourceRank(source?: string | null): number {
+  if (isFinnhubSource(source)) {
+    return 1;
+  }
+  if (isAlphaVantageSource(source)) {
+    return 2;
+  }
+  if (isNasdaqSource(source)) {
+    return 3;
+  }
+  if (isYahooSource(source)) {
+    return 4;
+  }
+  if (isFinvizSource(source)) {
+    return 5;
+  }
+  return 99;
+}
+
 export function classifySourceQuality(quote?: {
   source?: string | null;
   multiSourceAgree?: boolean;
-  fallbackOnly?: boolean;
   price?: number | null;
 } | null): SourceQuality {
   if (!quote || quote.price == null) {
@@ -40,6 +97,12 @@ export function classifySourceQuality(quote?: {
 
   const source = quote.source ?? "";
 
+  if (isFinnhubSource(source) && !source.includes("Nasdaq")) {
+    return "finnhub_only";
+  }
+  if (isAlphaVantageSource(source) && !source.includes("Nasdaq")) {
+    return "alpha_vantage_only";
+  }
   if (isYahooSource(source) && isFinvizSource(source)) {
     return "yahoo_finviz";
   }
@@ -53,7 +116,7 @@ export function classifySourceQuality(quote?: {
     return "finviz_only";
   }
 
-  return quote.fallbackOnly ? "nasdaq_only" : "yahoo_only";
+  return "unavailable";
 }
 
 export function stampQuoteSourceQuality(quote: YahooQuote): YahooQuote {
@@ -90,99 +153,77 @@ export function resolveSourceQuality(
     };
   }
 
-  if (!primary) {
-    const sourceQuality = classifySourceQuality(fallback);
+  const candidates = [primary, fallback].filter(
+    (quote): quote is YahooQuote => quote != null,
+  );
+
+  const primaryApi = candidates.find((quote) => isPrimaryApiSource(quote.source));
+  const nasdaq = candidates.find((quote) => isNasdaqSource(quote.source));
+
+  if (
+    primaryApi &&
+    nasdaq &&
+    pricesAgree(primaryApi.price, nasdaq.price)
+  ) {
     return {
-      multiSourceAgree: false,
-      fallbackOnly: !isYahooSource(fallback?.source),
-      source: fallback?.source ?? "unknown",
-      sourceQuality,
+      multiSourceAgree: true,
+      fallbackOnly: false,
+      source: `${baseSourceLabel(primaryApi.source)} + Nasdaq`,
+      sourceQuality: "multi_source_agreement",
     };
   }
 
-  if (!fallback) {
-    const sourceQuality = classifySourceQuality(primary);
+  const best = [...candidates].sort(
+    (a, b) => sourceRank(a.source) - sourceRank(b.source),
+  )[0]!;
+
+  if (primaryApi && nasdaq) {
     return {
       multiSourceAgree: false,
-      fallbackOnly: !isYahooSource(primary.source),
-      source: primary.source ?? "Yahoo Finance",
-      sourceQuality,
+      fallbackOnly: false,
+      source: `${baseSourceLabel(primaryApi.source)} + Nasdaq`,
+      sourceQuality: classifySourceQuality({
+        source: primaryApi.source,
+        price: primaryApi.price,
+      }),
     };
-  }
-
-  const yahoo = isYahooSource(primary.source)
-    ? primary
-    : isYahooSource(fallback.source)
-      ? fallback
-      : null;
-  const nasdaq = isNasdaqSource(primary.source)
-    ? primary
-    : isNasdaqSource(fallback.source)
-      ? fallback
-      : null;
-
-  const multiSourceAgree =
-    yahoo != null && nasdaq != null && pricesAgree(yahoo.price, nasdaq.price);
-
-  const hasYahoo =
-    isYahooSource(primary.source) || isYahooSource(fallback.source);
-  const fallbackOnly = !hasYahoo;
-
-  let source: string;
-  if (multiSourceAgree) {
-    source = "Yahoo Finance + Nasdaq";
-  } else if (isFinvizSource(primary.source) && isYahooSource(fallback.source)) {
-    const finvizLabel = primary.source?.split(" + ").pop() ?? primary.source ?? "Finviz";
-    source = `${fallback.source ?? "Yahoo Finance"} + ${finvizLabel}`;
-  } else if (isFinvizSource(fallback.source) && isYahooSource(primary.source)) {
-    const finvizLabel = fallback.source?.split(" + ").pop() ?? fallback.source ?? "Finviz";
-    source = `${primary.source ?? "Yahoo Finance"} + ${finvizLabel}`;
-  } else if (hasYahoo) {
-    source = isYahooSource(primary.source)
-      ? (primary.source ?? "Yahoo Finance")
-      : (fallback.source ?? "Yahoo Finance");
-  } else {
-    source = primary.source ?? fallback.source ?? "unknown";
   }
 
   return {
-    multiSourceAgree,
-    fallbackOnly,
-    source,
-    sourceQuality: classifySourceQuality({
-      source,
-      multiSourceAgree,
-      fallbackOnly,
-      price: yahoo?.price ?? nasdaq?.price ?? primary.price ?? fallback.price,
-    }),
+    multiSourceAgree: false,
+    fallbackOnly: isNasdaqSource(best.source) || isFinvizSource(best.source),
+    source: best.source ?? "unknown",
+    sourceQuality: classifySourceQuality(best),
   };
 }
 
 export function computeQuoteConfidence(input: {
-  dataFreshness?: DataFreshness;
-  quoteValidated?: boolean;
-  hasPrice?: boolean;
+  sourceQuality?: SourceQuality;
   multiSourceAgree?: boolean;
-  fallbackOnly?: boolean;
+  hasPrice?: boolean;
+  quoteValidated?: boolean;
 }): number {
   if (!input.hasPrice) {
     return 50;
   }
 
-  if (input.quoteValidated !== true) {
-    return input.dataFreshness === "fresh" ? 45 : 35;
+  if (input.multiSourceAgree || input.sourceQuality === "multi_source_agreement") {
+    return 95;
+  }
+  if (input.sourceQuality === "nasdaq_only") {
+    return 70;
+  }
+  if (input.sourceQuality === "finviz_only" || input.sourceQuality === "yahoo_finviz") {
+    return 55;
+  }
+  if (input.sourceQuality === "finnhub_only" || input.sourceQuality === "alpha_vantage_only") {
+    return input.quoteValidated === false ? 65 : 80;
+  }
+  if (input.sourceQuality === "yahoo_only") {
+    return input.quoteValidated === false ? 60 : 75;
   }
 
-  let confidence = input.dataFreshness === "fresh" ? 90 : 75;
-
-  if (input.multiSourceAgree) {
-    confidence += 5;
-  }
-  if (input.fallbackOnly) {
-    confidence -= 5;
-  }
-
-  return Math.max(0, Math.min(100, confidence));
+  return input.quoteValidated === false ? 45 : 70;
 }
 
 export function computeWatchlistConfidence(
@@ -203,10 +244,9 @@ export function confidenceFromQuote(quote?: YahooQuote | null): number {
   }
 
   return computeQuoteConfidence({
-    dataFreshness: quote.dataFreshness,
-    quoteValidated: quote.quoteValidated,
-    hasPrice: quote.price != null,
+    sourceQuality: quote.sourceQuality ?? classifySourceQuality(quote),
     multiSourceAgree: quote.multiSourceAgree,
-    fallbackOnly: quote.fallbackOnly,
+    hasPrice: quote.price != null,
+    quoteValidated: quote.quoteValidated,
   });
 }

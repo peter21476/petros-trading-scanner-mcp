@@ -860,7 +860,10 @@ function buildPositionRisks(input: {
   }
 
   if (signal.sourceQuality === "nasdaq_only") {
-    risks.push("Quote sourced from Nasdaq fallback only (Yahoo unavailable)");
+    risks.push("Quote sourced from Nasdaq only");
+  }
+  if (signal.sourceQuality === "finviz_only") {
+    risks.push("Quote sourced from Finviz snapshot only");
   }
 
   for (const reason of signal.reasons) {

@@ -183,6 +183,8 @@ export type DataFreshness = "fresh" | "stale";
 
 export type SourceQuality =
   | "multi_source_agreement"
+  | "finnhub_only"
+  | "alpha_vantage_only"
   | "yahoo_only"
   | "nasdaq_only"
   | "finviz_only"
@@ -192,6 +194,9 @@ export type SourceQuality =
 export interface QuoteDiagnostics {
   yahooBatchResolved: number;
   yahooBatchRequested: number;
+  yahooSkipped: boolean;
+  providersAttempted: string[];
+  rateLimitedSources: Array<{ source: string; until: string }>;
   bySourceQuality: Partial<Record<SourceQuality, number>>;
 }
 

@@ -21,15 +21,16 @@ Read-only **Model Context Protocol (MCP)** server for short-term stock and ETF *
 ### Data sources (free/public)
 
 1. **Finviz** — futures, breadth, snapshot, earnings API
-2. **Yahoo Finance** — batch spark API for quotes/futures; individual chart fallback
-3. **Nasdaq** — quote fallback when Yahoo is rate-limited (price, change %, volume)
-4. **Finviz snapshot** — top gainers/losers/unusual volume/major news as secondary fallback
-5. **MarketWatch** — premarket movers (often blocked on cloud hosts with HTTP 401)
-6. **Yahoo Finance screeners** — day gainers/losers/actives when MarketWatch is blocked
+2. **Finnhub** — optional primary quotes when `FINNHUB_API_KEY` is set
+3. **Alpha Vantage** — optional quotes when `ALPHA_VANTAGE_API_KEY` is set
+4. **Nasdaq** — quote provider (price, change %, volume)
+5. **Yahoo Finance** — spark batch only when not rate-limited (30 min cooldown after HTTP 429)
+6. **MarketWatch** — premarket movers (often blocked on cloud hosts with HTTP 401)
+7. **Yahoo Finance screeners** — day gainers/losers/actives when MarketWatch is blocked
 
 Caching: **5 minutes** for market data, **15 minutes** for daily briefings.
 
-Watchlist quotes resolve in order: **Yahoo batch → Nasdaq → Finviz snapshot → Yahoo individual**. Each signal includes `quoteSource`, `price`, `changePercent`, and `volume` when available.
+Watchlist quotes resolve in order: **Finnhub → Alpha Vantage → Nasdaq → Yahoo (if not rate-limited) → Finviz**. Yahoo is skipped for 30 minutes after HTTP 429. Check `quoteDiagnostics.rateLimitedSources` to see active blocks.
 
 **Note:** MarketWatch frequently returns **HTTP 401** from Heroku and other cloud servers due to bot protection. The server automatically falls back to Yahoo Finance, then Finviz. To skip MarketWatch entirely, set `MARKETWATCH_ENABLED=false` in Heroku config vars.
 
@@ -193,15 +194,15 @@ Watchlist signals and semiconductor strength include extra fields so you can san
 | `quoteSource` | e.g. `Yahoo Finance`, `Nasdaq`, `Finviz topGainers` |
 | `quoteValidated` | `true` when price, change, and % are internally consistent |
 | `dataFreshness` | `"fresh"` or `"stale"` — based on `asOf` age (≤3 days = fresh) |
-| `sourceQuality` | `"multi_source_agreement"`, `"yahoo_only"`, `"nasdaq_only"`, `"finviz_only"`, `"yahoo_finviz"`, or `"unavailable"` |
-| `confidence` | Quote quality (0–100): fresh+validated=90, stale+validated=75, missing=50; +5 multi-source agree, −5 fallback-only |
+| `sourceQuality` | `"multi_source_agreement"`, `"finnhub_only"`, `"alpha_vantage_only"`, `"nasdaq_only"`, `"finviz_only"`, etc. |
+| `confidence` | Primary+Nasdaq agreement=95, Nasdaq only=70, Finviz only=55 |
 | `isDelayed` | `true` for Finviz-only fallback quotes (change % only) |
 
 **Parser note:** Nasdaq quotes use `primaryData.lastSalePrice` — not market cap, 52-week high, or volume. If a price looks wrong, check `previousClose` and `asOf`: when change % looks realistic but the level seems off, the upstream feed (Yahoo/Nasdaq) may be reporting a different session or a forward-dated close. Cross-check with your broker.
 
 Daily briefings also include top-level `dataFreshness` — `"fresh"` only when futures, premarket, breadth, and all watchlist quotes are within the freshness window.
 
-`get_watchlist_signals` returns an overall `confidence` (average of per-symbol quote confidence scores) and `quoteDiagnostics` showing Yahoo batch success vs fallback paths.
+`get_watchlist_signals` returns overall `confidence`, `quoteDiagnostics` (including `rateLimitedSources` and `providersAttempted`).
 
 **The tools return data, scores, and reasons only — not buy/sell recommendations.** ChatGPT interprets the output; you make your own decisions.
 
