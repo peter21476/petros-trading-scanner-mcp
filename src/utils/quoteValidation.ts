@@ -1,6 +1,7 @@
 import { logger } from "./logger.js";
 import type { YahooQuote } from "../types/market.js";
 import { computeDataFreshness } from "./dataFreshness.js";
+import { stampQuoteSourceQuality } from "./quoteConfidence.js";
 
 const QUOTE_TOLERANCE_PERCENT = 0.75;
 
@@ -114,7 +115,7 @@ export function finalizeQuote(
     previousClose: base.previousClose,
   });
 
-  return {
+  return stampQuoteSourceQuality({
     ...base,
     price: reconciled.price,
     change: reconciled.change,
@@ -125,5 +126,5 @@ export function finalizeQuote(
       asOf: base.asOf,
       isDelayed: base.isDelayed,
     }),
-  };
+  });
 }

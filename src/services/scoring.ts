@@ -459,6 +459,7 @@ export function scoreWatchlistSymbol(input: {
     quoteValidated,
     dataFreshness,
     confidence,
+    sourceQuality: quote?.sourceQuality ?? "unavailable",
     headline: headline ?? null,
     inFinvizLists: finvizLists,
   };

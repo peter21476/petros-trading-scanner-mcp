@@ -2,7 +2,10 @@ import {
   computeAggregateDataFreshness,
   computeDataFreshness,
 } from "../utils/dataFreshness.js";
-import { computeWatchlistConfidence } from "../utils/quoteConfidence.js";
+import {
+  computeWatchlistConfidence,
+  countBySourceQuality,
+} from "../utils/quoteConfidence.js";
 import { CACHE_TTL, getCached } from "./cache.js";
 import { fetchFinvizEarnings, fetchFinvizHomepage, safeFetchFinvizHomepage } from "./finviz.js";
 import {
@@ -387,6 +390,23 @@ export async function getWatchlistSignals(
     const quotes = quoteResult.quotes;
     warnings.push(...quoteResult.warnings);
 
+    const focusUpper = symbols.map((symbol) => symbol.toUpperCase());
+    const quoteDiagnostics = {
+      yahooBatchResolved: quoteResult.diagnostics.yahooBatchResolved,
+      yahooBatchRequested: quoteResult.diagnostics.yahooBatchRequested,
+      bySourceQuality: countBySourceQuality(
+        focusUpper
+          .map((symbol) => quotes.get(symbol))
+          .filter((quote): quote is NonNullable<typeof quote> => quote != null),
+      ),
+    };
+
+    if (quoteResult.diagnostics.yahooBatchResolved === 0) {
+      warnings.push(
+        "Yahoo Finance batch returned no data — quotes may be Nasdaq-only unless individual Yahoo corroboration succeeds",
+      );
+    }
+
     if (quoteResult.coverage.resolved === 0) {
       warnings.push("Live quote lookup failed; Finviz snapshot used where available");
     }
@@ -429,6 +449,7 @@ export async function getWatchlistSignals(
       confidence: computeWatchlistConfidence(
         signals.map((signal) => signal.confidence),
       ),
+      quoteDiagnostics,
       warnings,
       signals,
     };

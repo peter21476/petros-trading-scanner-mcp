@@ -159,6 +159,20 @@ export interface EarningsCalendarResponse {
 
 export type DataFreshness = "fresh" | "stale";
 
+export type SourceQuality =
+  | "multi_source_agreement"
+  | "yahoo_only"
+  | "nasdaq_only"
+  | "finviz_only"
+  | "yahoo_finviz"
+  | "unavailable";
+
+export interface QuoteDiagnostics {
+  yahooBatchResolved: number;
+  yahooBatchRequested: number;
+  bySourceQuality: Partial<Record<SourceQuality, number>>;
+}
+
 export interface WatchlistSignal {
   symbol: string;
   score: number;
@@ -175,6 +189,7 @@ export interface WatchlistSignal {
   quoteValidated?: boolean;
   dataFreshness?: DataFreshness;
   confidence?: number;
+  sourceQuality?: SourceQuality;
   headline?: string | null;
   inFinvizLists?: string[];
 }
@@ -183,6 +198,7 @@ export interface WatchlistSignalsResponse {
   timestamp: string;
   dataFreshness: DataFreshness;
   confidence: number;
+  quoteDiagnostics?: QuoteDiagnostics;
   warnings?: string[];
   signals: WatchlistSignal[];
 }
@@ -234,6 +250,7 @@ export interface YahooQuote {
   dataFreshness?: DataFreshness;
   multiSourceAgree?: boolean;
   fallbackOnly?: boolean;
+  sourceQuality?: SourceQuality;
 }
 
 export interface FinvizHomepageData {

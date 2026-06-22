@@ -166,6 +166,7 @@ Watchlist signals and semiconductor strength include extra fields so you can san
 | `quoteSource` | e.g. `Yahoo Finance`, `Nasdaq`, `Finviz topGainers` |
 | `quoteValidated` | `true` when price, change, and % are internally consistent |
 | `dataFreshness` | `"fresh"` or `"stale"` — based on `asOf` age (≤3 days = fresh) |
+| `sourceQuality` | `"multi_source_agreement"`, `"yahoo_only"`, `"nasdaq_only"`, `"finviz_only"`, `"yahoo_finviz"`, or `"unavailable"` |
 | `confidence` | Quote quality (0–100): fresh+validated=90, stale+validated=75, missing=50; +5 multi-source agree, −5 fallback-only |
 | `isDelayed` | `true` for Finviz-only fallback quotes (change % only) |
 
@@ -173,7 +174,7 @@ Watchlist signals and semiconductor strength include extra fields so you can san
 
 Daily briefings also include top-level `dataFreshness` — `"fresh"` only when futures, premarket, breadth, and all watchlist quotes are within the freshness window.
 
-`get_watchlist_signals` returns an overall `confidence` (average of per-symbol quote confidence scores).
+`get_watchlist_signals` returns an overall `confidence` (average of per-symbol quote confidence scores) and `quoteDiagnostics` showing Yahoo batch success vs fallback paths.
 
 **The tools return data, scores, and reasons only — not buy/sell recommendations.** ChatGPT interprets the output; you make your own decisions.
 

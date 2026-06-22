@@ -1,4 +1,4 @@
-import type { DataFreshness, YahooQuote } from "../types/market.js";
+import type { DataFreshness, SourceQuality, YahooQuote } from "../types/market.js";
 
 const PRICE_AGREEMENT_TOLERANCE_PERCENT = 0.15;
 
@@ -24,6 +24,54 @@ export function isFinvizSource(source?: string | null): boolean {
   return source?.includes("Finviz") ?? false;
 }
 
+export function classifySourceQuality(quote?: {
+  source?: string | null;
+  multiSourceAgree?: boolean;
+  fallbackOnly?: boolean;
+  price?: number | null;
+} | null): SourceQuality {
+  if (!quote || quote.price == null) {
+    return "unavailable";
+  }
+
+  if (quote.multiSourceAgree) {
+    return "multi_source_agreement";
+  }
+
+  const source = quote.source ?? "";
+
+  if (isYahooSource(source) && isFinvizSource(source)) {
+    return "yahoo_finviz";
+  }
+  if (isYahooSource(source)) {
+    return "yahoo_only";
+  }
+  if (isNasdaqSource(source)) {
+    return "nasdaq_only";
+  }
+  if (isFinvizSource(source)) {
+    return "finviz_only";
+  }
+
+  return quote.fallbackOnly ? "nasdaq_only" : "yahoo_only";
+}
+
+export function stampQuoteSourceQuality(quote: YahooQuote): YahooQuote {
+  const sourceQuality = classifySourceQuality(quote);
+  return { ...quote, sourceQuality };
+}
+
+export function countBySourceQuality(
+  quotes: Iterable<YahooQuote>,
+): Partial<Record<SourceQuality, number>> {
+  const counts: Partial<Record<SourceQuality, number>> = {};
+  for (const quote of quotes) {
+    const key = quote.sourceQuality ?? classifySourceQuality(quote);
+    counts[key] = (counts[key] ?? 0) + 1;
+  }
+  return counts;
+}
+
 export function resolveSourceQuality(
   primary?: YahooQuote,
   fallback?: YahooQuote,
@@ -31,24 +79,34 @@ export function resolveSourceQuality(
   multiSourceAgree: boolean;
   fallbackOnly: boolean;
   source: string;
+  sourceQuality: SourceQuality;
 } {
   if (!primary && !fallback) {
-    return { multiSourceAgree: false, fallbackOnly: true, source: "unavailable" };
+    return {
+      multiSourceAgree: false,
+      fallbackOnly: true,
+      source: "unavailable",
+      sourceQuality: "unavailable",
+    };
   }
 
   if (!primary) {
+    const sourceQuality = classifySourceQuality(fallback);
     return {
       multiSourceAgree: false,
       fallbackOnly: !isYahooSource(fallback?.source),
       source: fallback?.source ?? "unknown",
+      sourceQuality,
     };
   }
 
   if (!fallback) {
+    const sourceQuality = classifySourceQuality(primary);
     return {
       multiSourceAgree: false,
       fallbackOnly: !isYahooSource(primary.source),
       source: primary.source ?? "Yahoo Finance",
+      sourceQuality,
     };
   }
 
@@ -87,7 +145,17 @@ export function resolveSourceQuality(
     source = primary.source ?? fallback.source ?? "unknown";
   }
 
-  return { multiSourceAgree, fallbackOnly, source };
+  return {
+    multiSourceAgree,
+    fallbackOnly,
+    source,
+    sourceQuality: classifySourceQuality({
+      source,
+      multiSourceAgree,
+      fallbackOnly,
+      price: yahoo?.price ?? nasdaq?.price ?? primary.price ?? fallback.price,
+    }),
+  };
 }
 
 export function computeQuoteConfidence(input: {

@@ -1,10 +1,16 @@
 import { CACHE_TTL, getCached } from "./cache.js";
 import { safeFetchJson } from "./http.js";
 import { fetchYahooQuote } from "./yahoo.js";
-import type { FinvizHomepageData, SnapshotStock, YahooQuote } from "../types/market.js";
+import type { FinvizHomepageData, SnapshotStock, SourceQuality, YahooQuote } from "../types/market.js";
 import { parseNumber, parsePercent, parseVolume, signedChange } from "../utils/parseNumber.js";
 import { finalizeQuote } from "../utils/quoteValidation.js";
-import { isYahooSource, resolveSourceQuality } from "../utils/quoteConfidence.js";
+import {
+  countBySourceQuality,
+  isNasdaqSource,
+  isYahooSource,
+  resolveSourceQuality,
+  stampQuoteSourceQuality,
+} from "../utils/quoteConfidence.js";
 import { logger } from "../utils/logger.js";
 
 const SPARK_BATCH_SIZE = 8;
@@ -391,36 +397,38 @@ async function fetchMissingQuotesIndividually(
   return map;
 }
 
-async function corroborateWithNasdaq(
+async function corroborateQuotes(
   quotes: Map<string, YahooQuote>,
   symbols: string[],
 ): Promise<void> {
-  const targets = symbols.filter((symbol) => {
-    const quote = quotes.get(symbol);
-    return (
-      quote?.price != null &&
-      isYahooSource(quote.source) &&
-      quote.multiSourceAgree !== true
-    );
-  });
-
-  if (targets.length === 0) {
-    return;
-  }
-
   await Promise.all(
-    targets.map(async (symbol) => {
+    symbols.map(async (symbol) => {
       const existing = quotes.get(symbol);
-      if (!existing) {
+      if (!existing?.price || existing.multiSourceAgree) {
         return;
       }
-      const nasdaqQuote = await fetchNasdaqQuoteWithFallback(symbol);
-      if (!nasdaqQuote) {
+
+      if (isYahooSource(existing.source)) {
+        const nasdaqQuote = await fetchNasdaqQuoteWithFallback(symbol);
+        if (!nasdaqQuote) {
+          return;
+        }
+        const merged = mergeQuote(existing, nasdaqQuote);
+        if (merged) {
+          quotes.set(symbol, merged);
+        }
         return;
       }
-      const merged = mergeQuote(existing, nasdaqQuote);
-      if (merged) {
-        quotes.set(symbol, merged);
+
+      if (isNasdaqSource(existing.source)) {
+        const yahooQuote = await fetchYahooQuote(symbol);
+        if (!yahooQuote?.price) {
+          return;
+        }
+        const merged = mergeQuote(yahooQuote, existing);
+        if (merged) {
+          quotes.set(symbol, merged);
+        }
       }
     }),
   );
@@ -434,10 +442,10 @@ function mergeQuote(
     return undefined;
   }
   if (!primary) {
-    return fallback;
+    return stampQuoteSourceQuality(fallback!);
   }
   if (!fallback) {
-    return primary;
+    return stampQuoteSourceQuality(primary);
   }
 
   const sourceQuality = resolveSourceQuality(primary, fallback);
@@ -479,6 +487,7 @@ function mergeQuote(
     isDelayed: chosen.isDelayed ?? other.isDelayed ?? false,
     multiSourceAgree: sourceQuality.multiSourceAgree,
     fallbackOnly: sourceQuality.fallbackOnly,
+    sourceQuality: sourceQuality.sourceQuality,
   });
 }
 
@@ -494,6 +503,11 @@ export async function fetchQuotes(
     requested: number;
     resolved: number;
     unresolved: string[];
+  };
+  diagnostics: {
+    yahooBatchResolved: number;
+    yahooBatchRequested: number;
+    bySourceQuality: Partial<Record<SourceQuality, number>>;
   };
 }> {
   const unique = [...new Set(symbols.map((symbol) => symbol.toUpperCase()))].sort();
@@ -549,7 +563,7 @@ export async function fetchQuotes(
       }
     }
 
-    await corroborateWithNasdaq(resolved, unique);
+    await corroborateQuotes(resolved, unique);
 
     for (const symbol of unique) {
       const quote = resolved.get(symbol);
@@ -593,6 +607,11 @@ export async function fetchQuotes(
         requested: unique.length,
         resolved: unique.length - unresolved.length,
         unresolved,
+      },
+      diagnostics: {
+        yahooBatchResolved: yahooBatch.size,
+        yahooBatchRequested: unique.length,
+        bySourceQuality: countBySourceQuality(resolved.values()),
       },
     };
   });
