@@ -137,11 +137,8 @@ export function computeSemiconductorStrength(
       newsChange ??
       null;
 
-    const dataSource = quote
-      ? "Yahoo Finance"
-      : newsChange != null
-        ? "Finviz major news"
-        : "unavailable";
+    const dataSource = quote?.source
+      ?? (newsChange != null ? "Finviz major news" : "unavailable");
 
     symbolDetails.push({
       symbol,
@@ -438,6 +435,8 @@ export function scoreWatchlistSymbol(input: {
     riskFlags,
     price: quote?.price ?? null,
     changePercent,
+    volume: quote?.volume ?? null,
+    quoteSource: quote?.source ?? null,
     headline: headline ?? null,
     inFinvizLists: finvizLists,
   };

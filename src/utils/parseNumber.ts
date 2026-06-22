@@ -7,6 +7,7 @@ export function parseNumber(value: string | undefined | null): number | null {
     .replace(/,/g, "")
     .replace(/%/g, "")
     .replace(/\+/g, "")
+    .replace(/\$/g, "")
     .trim();
 
   const parsed = Number.parseFloat(normalized);

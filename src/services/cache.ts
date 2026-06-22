@@ -14,6 +14,9 @@ export async function getCached<T>(
   key: string,
   ttlMs: number,
   fetcher: () => Promise<T>,
+  options?: {
+    skipCacheWhen?: (value: T) => boolean;
+  },
 ): Promise<T> {
   const now = Date.now();
   const existing = store.get(key);
@@ -23,7 +26,9 @@ export async function getCached<T>(
   }
 
   const value = await fetcher();
-  store.set(key, { value, expiresAt: now + ttlMs });
+  if (!options?.skipCacheWhen?.(value)) {
+    store.set(key, { value, expiresAt: now + ttlMs });
+  }
   return value;
 }
 

@@ -165,6 +165,8 @@ export interface WatchlistSignal {
   riskFlags: string[];
   price?: number | null;
   changePercent?: number | null;
+  volume?: number | null;
+  quoteSource?: string | null;
   headline?: string | null;
   inFinvizLists?: string[];
 }
@@ -213,6 +215,7 @@ export interface YahooQuote {
   preMarketChangePercent: number | null;
   volume: number | null;
   shortName: string | null;
+  source?: string;
 }
 
 export interface FinvizHomepageData {

@@ -153,39 +153,45 @@ async function fetchYahooChart(symbol: string): Promise<YahooChartMeta | null> {
 }
 
 export async function fetchYahooQuote(symbol: string): Promise<YahooQuote | null> {
-  return getCached(`yahoo:quote:${symbol}`, CACHE_TTL.MARKET_DATA_MS, async () => {
-    const meta = await fetchYahooChart(symbol);
-    if (!meta) {
-      return null;
-    }
+  return getCached(
+    `yahoo:quote:${symbol}`,
+    CACHE_TTL.MARKET_DATA_MS,
+    async () => {
+      const meta = await fetchYahooChart(symbol);
+      if (!meta) {
+        return null;
+      }
 
-    const quote = buildQuoteFromMeta(meta);
-    const previousClose = meta.previousClose ?? meta.chartPreviousClose ?? null;
-    let preMarketChangePercent: number | null = null;
+      const quote = buildQuoteFromMeta(meta);
+      const previousClose = meta.previousClose ?? meta.chartPreviousClose ?? null;
+      let preMarketChangePercent: number | null = null;
 
-    if (
-      meta.preMarketPrice != null &&
-      previousClose != null &&
-      previousClose !== 0
-    ) {
-      preMarketChangePercent =
-        ((meta.preMarketPrice - previousClose) / previousClose) * 100;
-    }
+      if (
+        meta.preMarketPrice != null &&
+        previousClose != null &&
+        previousClose !== 0
+      ) {
+        preMarketChangePercent =
+          ((meta.preMarketPrice - previousClose) / previousClose) * 100;
+      }
 
-    return {
-      symbol: meta.symbol ?? symbol,
-      price: quote.last,
-      change: quote.change,
-      changePercent: quote.changePercent,
-      preMarketPrice: meta.preMarketPrice ?? null,
-      preMarketChangePercent:
-        preMarketChangePercent == null
-          ? null
-          : Number(preMarketChangePercent.toFixed(4)),
-      volume: meta.regularMarketVolume ?? null,
-      shortName: meta.shortName ?? meta.longName ?? null,
-    };
-  });
+      return {
+        symbol: (meta.symbol ?? symbol).toUpperCase(),
+        price: quote.last,
+        change: quote.change,
+        changePercent: quote.changePercent,
+        preMarketPrice: meta.preMarketPrice ?? null,
+        preMarketChangePercent:
+          preMarketChangePercent == null
+            ? null
+            : Number(preMarketChangePercent.toFixed(4)),
+        volume: meta.regularMarketVolume ?? null,
+        shortName: meta.shortName ?? meta.longName ?? symbol,
+        source: "Yahoo Finance",
+      };
+    },
+    { skipCacheWhen: (value) => value == null },
+  );
 }
 
 const YAHOO_REQUEST_DELAY_MS = 150;
@@ -195,20 +201,9 @@ function delay(ms: number): Promise<void> {
 }
 
 export async function fetchYahooQuotes(symbols: string[]): Promise<Map<string, YahooQuote>> {
-  const unique = [...new Set(symbols.map((s) => s.toUpperCase()))];
-  const map = new Map<string, YahooQuote>();
-
-  for (const symbol of unique) {
-    const quote = await fetchYahooQuote(symbol);
-    if (quote) {
-      map.set(symbol, quote);
-    }
-    if (unique.indexOf(symbol) < unique.length - 1) {
-      await delay(YAHOO_REQUEST_DELAY_MS);
-    }
-  }
-
-  return map;
+  const { fetchQuotes } = await import("./quotes.js");
+  const result = await fetchQuotes(symbols);
+  return result.quotes;
 }
 
 export async function fetchYahooFutures(): Promise<{

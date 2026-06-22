@@ -20,11 +20,15 @@ Read-only **Model Context Protocol (MCP)** server for short-term stock and ETF *
 ### Data sources (free/public)
 
 1. **Finviz** — futures, breadth, snapshot, earnings API
-2. **Yahoo Finance** — chart API for quotes/futures fallback and headlines
-3. **MarketWatch** — premarket movers (often blocked on cloud hosts with HTTP 401)
-4. **Yahoo Finance screeners** — day gainers/losers/actives when MarketWatch is blocked
+2. **Yahoo Finance** — batch spark API for quotes/futures; individual chart fallback
+3. **Nasdaq** — quote fallback when Yahoo is rate-limited (price, change %, volume)
+4. **Finviz snapshot** — top gainers/losers/unusual volume/major news as secondary fallback
+5. **MarketWatch** — premarket movers (often blocked on cloud hosts with HTTP 401)
+6. **Yahoo Finance screeners** — day gainers/losers/actives when MarketWatch is blocked
 
 Caching: **5 minutes** for market data, **15 minutes** for daily briefings.
+
+Watchlist quotes resolve in order: **Yahoo batch → Nasdaq → Finviz snapshot → Yahoo individual**. Each signal includes `quoteSource`, `price`, `changePercent`, and `volume` when available.
 
 **Note:** MarketWatch frequently returns **HTTP 401** from Heroku and other cloud servers due to bot protection. The server automatically falls back to Yahoo Finance, then Finviz. To skip MarketWatch entirely, set `MARKETWATCH_ENABLED=false` in Heroku config vars.
 

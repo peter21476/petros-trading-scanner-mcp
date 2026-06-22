@@ -19,8 +19,8 @@ import {
   fetchYahooFutures,
   fetchYahooMovers,
   fetchYahooNewsHeadline,
-  fetchYahooQuotes,
 } from "./yahoo.js";
+import { fetchQuotes } from "./quotes.js";
 import {
   emptyBreadth,
   emptyFutures,
@@ -115,23 +115,26 @@ export async function getSemiconductorStrength(): Promise<SemiconductorStrengthR
       warnings.push(finviz.warning);
     }
 
-    const quotes = await fetchYahooQuotes([...SEMICONDUCTOR_SYMBOLS]);
-    const sources = new Set<string>();
-    if (quotes.size > 0) {
-      sources.add("Yahoo Finance");
-    }
-    if ((finviz.data?.majorNews.length ?? 0) > 0) {
-      sources.add("Finviz major news");
-    }
-
-    if (quotes.size === 0 && !finviz.data?.majorNews.length) {
-      warnings.push("Limited semiconductor quote coverage from all sources");
-    }
+    const finvizSnapshot = finviz.data ?? null;
+    const quoteResult = await fetchQuotes([...SEMICONDUCTOR_SYMBOLS], {
+      finvizSnapshot,
+    });
+    warnings.push(...quoteResult.warnings);
 
     const strength = computeSemiconductorStrength(
-      quotes,
+      quoteResult.quotes,
       finviz.data?.majorNews ?? [],
     );
+
+    const sources = new Set<string>();
+    for (const quote of quoteResult.quotes.values()) {
+      if (quote.source) {
+        sources.add(quote.source);
+      }
+    }
+    if (sources.size === 0 && (finviz.data?.majorNews.length ?? 0) > 0) {
+      sources.add("Finviz major news");
+    }
 
     return toSemiconductorStrengthResponse(
       strength,
@@ -373,9 +376,14 @@ export async function getWatchlistSignals(
     const quoteSymbols = [
       ...new Set([...symbols.map((s) => s.toUpperCase()), ...SEMICONDUCTOR_SYMBOLS]),
     ];
-    const quotes = await fetchYahooQuotes(quoteSymbols);
-    if (quotes.size === 0) {
-      warnings.push("Yahoo Finance quotes unavailable; using Finviz major news where possible");
+    const quoteResult = await fetchQuotes(quoteSymbols, {
+      finvizSnapshot: finviz.data ?? null,
+    });
+    const quotes = quoteResult.quotes;
+    warnings.push(...quoteResult.warnings);
+
+    if (quoteResult.coverage.resolved === 0) {
+      warnings.push("Live quote lookup failed; Finviz snapshot used where available");
     }
     const semiconductorStrength = computeSemiconductorStrength(
       quotes,
@@ -392,23 +400,9 @@ export async function getWatchlistSignals(
     const signals = await Promise.all(
       symbols.map(async (symbol) => {
         const upper = symbol.toUpperCase();
-        let quote = quotes.get(upper) ?? null;
+        const quote = quotes.get(upper) ?? null;
         const headline = await fetchYahooNewsHeadline(upper);
         const finvizLists = finvizListsForSymbol(upper, snapshot);
-        const majorNewsItem = snapshot.majorNews.find((item) => item.symbol === upper);
-
-        if (!quote && majorNewsItem?.changePercent != null) {
-          quote = {
-            symbol: upper,
-            price: majorNewsItem.price ?? null,
-            change: null,
-            changePercent: majorNewsItem.changePercent,
-            preMarketPrice: null,
-            preMarketChangePercent: majorNewsItem.changePercent,
-            volume: majorNewsItem.volume ?? null,
-            shortName: majorNewsItem.name ?? upper,
-          };
-        }
 
         return scoreWatchlistSymbol({
           symbol: upper,

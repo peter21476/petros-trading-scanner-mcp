@@ -81,9 +81,12 @@ export async function safeFetchText(url: string): Promise<string | null> {
   }
 }
 
-export async function safeFetchJson<T>(url: string): Promise<T | null> {
+export async function safeFetchJson<T>(
+  url: string,
+  init?: RequestInit,
+): Promise<T | null> {
   try {
-    return await fetchJson<T>(url);
+    return await fetchJson<T>(url, init);
   } catch (error) {
     logger.warn("safeFetchJson failed", { url, error: String(error) });
     return null;
