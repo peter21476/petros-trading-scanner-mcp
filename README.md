@@ -166,7 +166,7 @@ Watchlist signals and semiconductor strength include extra fields so you can san
 | `quoteSource` | e.g. `Yahoo Finance`, `Nasdaq`, `Finviz topGainers` |
 | `quoteValidated` | `true` when price, change, and % are internally consistent |
 | `dataFreshness` | `"fresh"` or `"stale"` — based on `asOf` age (≤3 days = fresh) |
-| `confidence` | Quote quality score (0–100): fresh+validated ≈ 92, stale+validated ≈ 75, unvalidated &lt; 50 |
+| `confidence` | Quote quality (0–100): fresh+validated=90, stale+validated=75, missing=50; +5 multi-source agree, −5 fallback-only |
 | `isDelayed` | `true` for Finviz-only fallback quotes (change % only) |
 
 **Parser note:** Nasdaq quotes use `primaryData.lastSalePrice` — not market cap, 52-week high, or volume. If a price looks wrong, check `previousClose` and `asOf`: when change % looks realistic but the level seems off, the upstream feed (Yahoo/Nasdaq) may be reporting a different session or a forward-dated close. Cross-check with your broker.

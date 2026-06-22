@@ -232,6 +232,8 @@ export interface YahooQuote {
   isDelayed?: boolean;
   quoteValidated?: boolean;
   dataFreshness?: DataFreshness;
+  multiSourceAgree?: boolean;
+  fallbackOnly?: boolean;
 }
 
 export interface FinvizHomepageData {

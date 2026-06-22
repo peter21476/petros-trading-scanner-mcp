@@ -4,6 +4,7 @@ import { fetchYahooQuote } from "./yahoo.js";
 import type { FinvizHomepageData, SnapshotStock, YahooQuote } from "../types/market.js";
 import { parseNumber, parsePercent, parseVolume, signedChange } from "../utils/parseNumber.js";
 import { finalizeQuote } from "../utils/quoteValidation.js";
+import { isYahooSource, resolveSourceQuality } from "../utils/quoteConfidence.js";
 import { logger } from "../utils/logger.js";
 
 const SPARK_BATCH_SIZE = 8;
@@ -77,7 +78,7 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function metaToQuote(meta: YahooSparkMeta, source: string): YahooQuote | null {
+function metaToQuote(meta: YahooSparkMeta): YahooQuote | null {
   const symbol = meta.symbol?.toUpperCase();
   if (!symbol) {
     return null;
@@ -124,9 +125,11 @@ function metaToQuote(meta: YahooSparkMeta, source: string): YahooQuote | null {
     preMarketChangePercent,
     volume: meta.regularMarketVolume ?? null,
     shortName: meta.shortName ?? meta.longName ?? symbol,
-    source,
+    source: "Yahoo Finance",
     asOf,
     isDelayed: false,
+    multiSourceAgree: false,
+    fallbackOnly: false,
   });
 }
 
@@ -167,7 +170,6 @@ async function fetchYahooSparkChunk(
     }
     const quote = metaToQuote(
       { ...meta, symbol: meta.symbol ?? item.symbol },
-      "Yahoo Finance",
     );
     if (quote) {
       map.set(quote.symbol, quote);
@@ -287,6 +289,8 @@ async function fetchNasdaqQuote(
     source: "Nasdaq",
     asOf: parseNasdaqTimestamp(primary.lastTradeTimestamp),
     isDelayed: primary.isRealTime === false,
+    multiSourceAgree: false,
+    fallbackOnly: true,
   });
 }
 
@@ -333,6 +337,8 @@ function buildFinvizQuoteIndex(
           : `Finviz ${listName}`,
         asOf: null,
         isDelayed: true,
+        multiSourceAgree: false,
+        fallbackOnly: !isYahooSource(existing?.source),
       }));
     }
   };
@@ -366,13 +372,12 @@ async function fetchMissingQuotesIndividually(
   const map = new Map<string, YahooQuote>();
 
   for (const symbol of symbols) {
-    // Prefer Yahoo (same feed most brokers mirror) before Nasdaq fallback.
-    let quote = await fetchYahooQuote(symbol);
-
-    if (!quote || quote.price == null) {
-      const nasdaqQuote = await fetchNasdaqQuoteWithFallback(symbol);
-      quote = mergeQuote(quote ?? undefined, nasdaqQuote ?? undefined) ?? quote;
-    }
+    const yahooQuote = await fetchYahooQuote(symbol);
+    const nasdaqQuote = await fetchNasdaqQuoteWithFallback(symbol);
+    const quote =
+      mergeQuote(yahooQuote ?? undefined, nasdaqQuote ?? undefined) ??
+      yahooQuote ??
+      nasdaqQuote;
 
     if (quote) {
       map.set(symbol, quote);
@@ -384,6 +389,41 @@ async function fetchMissingQuotesIndividually(
   }
 
   return map;
+}
+
+async function corroborateWithNasdaq(
+  quotes: Map<string, YahooQuote>,
+  symbols: string[],
+): Promise<void> {
+  const targets = symbols.filter((symbol) => {
+    const quote = quotes.get(symbol);
+    return (
+      quote?.price != null &&
+      isYahooSource(quote.source) &&
+      quote.multiSourceAgree !== true
+    );
+  });
+
+  if (targets.length === 0) {
+    return;
+  }
+
+  await Promise.all(
+    targets.map(async (symbol) => {
+      const existing = quotes.get(symbol);
+      if (!existing) {
+        return;
+      }
+      const nasdaqQuote = await fetchNasdaqQuoteWithFallback(symbol);
+      if (!nasdaqQuote) {
+        return;
+      }
+      const merged = mergeQuote(existing, nasdaqQuote);
+      if (merged) {
+        quotes.set(symbol, merged);
+      }
+    }),
+  );
 }
 
 function mergeQuote(
@@ -399,6 +439,8 @@ function mergeQuote(
   if (!fallback) {
     return primary;
   }
+
+  const sourceQuality = resolveSourceQuality(primary, fallback);
 
   const preferPrimary =
     primary.source?.includes("Yahoo") ||
@@ -432,12 +474,11 @@ function mergeQuote(
       chosen.preMarketChangePercent ?? other.preMarketChangePercent,
     volume: chosen.volume ?? other.volume,
     shortName: chosen.shortName ?? other.shortName,
-    source:
-      chosen.price != null && chosen.source
-        ? chosen.source
-        : other.source ?? chosen.source ?? "Yahoo Finance",
+    source: sourceQuality.source,
     asOf: chosen.asOf ?? other.asOf ?? null,
     isDelayed: chosen.isDelayed ?? other.isDelayed ?? false,
+    multiSourceAgree: sourceQuality.multiSourceAgree,
+    fallbackOnly: sourceQuality.fallbackOnly,
   });
 }
 
@@ -507,6 +548,8 @@ export async function fetchQuotes(
         }
       }
     }
+
+    await corroborateWithNasdaq(resolved, unique);
 
     for (const symbol of unique) {
       const quote = resolved.get(symbol);
