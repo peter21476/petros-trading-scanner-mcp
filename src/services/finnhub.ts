@@ -30,6 +30,8 @@ export async function fetchFinnhubQuote(symbol: string): Promise<YahooQuote | nu
   const change = data.d != null ? Number(data.d.toFixed(4)) : null;
   const changePercent = data.dp != null ? Number(data.dp.toFixed(4)) : null;
   const previousClose = data.pc != null ? Number(data.pc.toFixed(4)) : null;
+  const finnhubAsOf =
+    data.t != null ? new Date(data.t * 1000).toISOString() : null;
 
   return finalizeQuote({
     symbol: symbol.toUpperCase(),
@@ -42,10 +44,17 @@ export async function fetchFinnhubQuote(symbol: string): Promise<YahooQuote | nu
     volume: null,
     shortName: symbol.toUpperCase(),
     source: "Finnhub",
-    asOf: data.t != null ? new Date(data.t * 1000).toISOString() : null,
+    asOf: finnhubAsOf,
     isDelayed: false,
     multiSourceAgree: false,
     fallbackOnly: false,
+    providerTimestamps: {
+      finnhub: {
+        iso: finnhubAsOf,
+        rawField: "t",
+        rawValue: data.t != null ? String(data.t) : undefined,
+      },
+    },
   });
 }
 

@@ -1,3 +1,7 @@
+import type { MarketSession } from "../utils/marketSession.js";
+
+export type { MarketSession };
+
 export interface QuotePoint {
   last: number | null;
   change: number | null;
@@ -179,7 +183,20 @@ export interface EarningsCalendarResponse {
   earnings: EarningsEntry[];
 }
 
-export type DataFreshness = "fresh" | "stale";
+export type DataFreshness = "fresh" | "delayed" | "stale" | "closed_session";
+
+export interface ProviderTimestampDebug {
+  iso?: string | null;
+  rawField?: string;
+  rawValue?: string;
+}
+
+export interface ProviderTimestamps {
+  finnhub?: ProviderTimestampDebug;
+  nasdaq?: ProviderTimestampDebug;
+  yahoo?: ProviderTimestampDebug;
+  finviz?: ProviderTimestampDebug;
+}
 
 export type SourceQuality =
   | "multi_source_agreement"
@@ -218,6 +235,10 @@ export interface WatchlistSignal {
   dataFreshness?: DataFreshness;
   confidence?: number;
   sourceQuality?: SourceQuality;
+  providerTimestamps?: ProviderTimestamps;
+  marketSession?: MarketSession;
+  freshnessAgeMinutes?: number | null;
+  freshnessReason?: string | null;
   headline?: string | null;
   inFinvizLists?: string[];
 }
@@ -279,6 +300,10 @@ export interface YahooQuote {
   multiSourceAgree?: boolean;
   fallbackOnly?: boolean;
   sourceQuality?: SourceQuality;
+  providerTimestamps?: ProviderTimestamps;
+  marketSession?: MarketSession;
+  freshnessAgeMinutes?: number | null;
+  freshnessReason?: string | null;
 }
 
 export interface FinvizHomepageData {

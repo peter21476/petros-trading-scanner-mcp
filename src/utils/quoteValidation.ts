@@ -1,6 +1,6 @@
 import { logger } from "./logger.js";
 import type { YahooQuote } from "../types/market.js";
-import { computeDataFreshness } from "./dataFreshness.js";
+import { assessQuoteFreshness } from "./dataFreshness.js";
 import { stampQuoteSourceQuality } from "./quoteConfidence.js";
 
 const QUOTE_TOLERANCE_PERCENT = 0.75;
@@ -115,6 +115,13 @@ export function finalizeQuote(
     previousClose: base.previousClose,
   });
 
+  const freshness = assessQuoteFreshness({
+    asOf: base.asOf,
+    providerTimestamps: base.providerTimestamps,
+    isDelayed: base.isDelayed,
+    quoteSource: base.source,
+  });
+
   return stampQuoteSourceQuality({
     ...base,
     price: reconciled.price,
@@ -122,9 +129,11 @@ export function finalizeQuote(
     changePercent: reconciled.changePercent,
     previousClose: reconciled.previousClose,
     quoteValidated: reconciled.quoteValidated,
-    dataFreshness: computeDataFreshness({
-      asOf: base.asOf,
-      isDelayed: base.isDelayed,
-    }),
+    asOf: freshness.asOf,
+    dataFreshness: freshness.dataFreshness,
+    marketSession: freshness.marketSession,
+    freshnessAgeMinutes: freshness.freshnessAgeMinutes,
+    freshnessReason: freshness.freshnessReason,
+    providerTimestamps: freshness.providerTimestamps,
   });
 }

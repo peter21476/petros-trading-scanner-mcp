@@ -11,8 +11,9 @@ import {
   isFinnhubEnabled,
 } from "./finnhub.js";
 import { fetchYahooSparkQuote, fetchYahooSparkQuotes } from "./yahooSpark.js";
-import type { FinvizHomepageData, SnapshotStock, SourceQuality, YahooQuote } from "../types/market.js";
+import type { FinvizHomepageData, ProviderTimestamps, SnapshotStock, SourceQuality, YahooQuote } from "../types/market.js";
 import { parseNumber, parsePercent, parseVolume, signedChange } from "../utils/parseNumber.js";
+import { getEasternDateKey, easternWallTimeToUtc } from "../utils/marketSession.js";
 import { finalizeQuote } from "../utils/quoteValidation.js";
 import {
   countBySourceQuality,
@@ -46,11 +47,33 @@ function parseNasdaqTimestamp(value?: string): string | null {
   if (!value) {
     return null;
   }
+
+  const hasTime = /\d{1,2}:\d{2}/.test(value);
+  if (!hasTime) {
+    const parsed = Date.parse(value);
+    if (!Number.isNaN(parsed)) {
+      const dateKey = getEasternDateKey(new Date(parsed));
+      return easternWallTimeToUtc(dateKey, 16, 0).toISOString();
+    }
+  }
+
   const parsed = Date.parse(value);
   if (Number.isNaN(parsed)) {
     return value;
   }
   return new Date(parsed).toISOString();
+}
+
+function mergeProviderTimestamps(
+  a?: ProviderTimestamps,
+  b?: ProviderTimestamps,
+): ProviderTimestamps {
+  return {
+    finnhub: a?.finnhub ?? b?.finnhub,
+    nasdaq: a?.nasdaq ?? b?.nasdaq,
+    yahoo: a?.yahoo ?? b?.yahoo,
+    finviz: a?.finviz ?? b?.finviz,
+  };
 }
 
 export interface FinvizSnapshotContext {
@@ -95,6 +118,9 @@ async function fetchNasdaqQuote(
     return null;
   }
 
+  const nasdaqRaw = primary.lastTradeTimestamp;
+  const nasdaqAsOf = parseNasdaqTimestamp(nasdaqRaw);
+
   return finalizeQuote({
     symbol: symbol.toUpperCase(),
     price,
@@ -106,10 +132,17 @@ async function fetchNasdaqQuote(
     volume,
     shortName: data?.data?.companyName ?? symbol,
     source: "Nasdaq",
-    asOf: parseNasdaqTimestamp(primary.lastTradeTimestamp),
+    asOf: nasdaqAsOf,
     isDelayed: primary.isRealTime === false,
     multiSourceAgree: false,
     fallbackOnly: true,
+    providerTimestamps: {
+      nasdaq: {
+        iso: nasdaqAsOf,
+        rawField: "lastTradeTimestamp",
+        rawValue: nasdaqRaw,
+      },
+    },
   });
 }
 
@@ -236,6 +269,11 @@ function mergeQuote(
     change = Number((price - previousClose).toFixed(4));
   }
 
+  const providerTimestamps = mergeProviderTimestamps(
+    primary.providerTimestamps,
+    fallback.providerTimestamps,
+  );
+
   return stampQuoteSourceQuality(
     finalizeQuote({
       symbol: chosen.symbol,
@@ -254,6 +292,7 @@ function mergeQuote(
       multiSourceAgree: sourceQuality.multiSourceAgree,
       fallbackOnly: sourceQuality.fallbackOnly,
       sourceQuality: sourceQuality.sourceQuality,
+      providerTimestamps,
     }),
   );
 }

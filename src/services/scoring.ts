@@ -427,9 +427,10 @@ export function scoreWatchlistSymbol(input: {
   }
   if (quote?.dataFreshness === "stale") {
     riskFlags.push(
-      quote?.asOf
-        ? `Quote data is stale (as of ${quote.asOf})`
-        : "Quote data is stale or missing timestamp",
+      quote?.freshnessReason ??
+        (quote?.asOf
+          ? `Quote data is stale (as of ${quote.asOf})`
+          : "Quote data is stale or missing timestamp"),
     );
   }
 
@@ -463,6 +464,10 @@ export function scoreWatchlistSymbol(input: {
     dataFreshness,
     confidence,
     sourceQuality: quote?.sourceQuality ?? "unavailable",
+    providerTimestamps: quote?.providerTimestamps,
+    marketSession: quote?.marketSession,
+    freshnessAgeMinutes: quote?.freshnessAgeMinutes,
+    freshnessReason: quote?.freshnessReason,
     headline: headline ?? null,
     inFinvizLists: finvizLists,
   };
