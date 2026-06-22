@@ -82,6 +82,32 @@ function sourceRank(source?: string | null): number {
   return 99;
 }
 
+function sourceIncludesProvider(
+  source: string,
+  provider: "Finnhub" | "Alpha Vantage" | "Yahoo Finance" | "Nasdaq" | "Finviz",
+): boolean {
+  return source.split(" + ").some((part) => part.trim().startsWith(provider));
+}
+
+function classifyCompositeSourceQuality(quote: {
+  source: string;
+  multiSourceAgree?: boolean;
+}): SourceQuality | null {
+  const hasNasdaq = sourceIncludesProvider(quote.source, "Nasdaq");
+  const hasFinnhub = sourceIncludesProvider(quote.source, "Finnhub");
+  const hasAlphaVantage = sourceIncludesProvider(quote.source, "Alpha Vantage");
+  const hasYahoo = sourceIncludesProvider(quote.source, "Yahoo Finance");
+  const hasPrimary = hasFinnhub || hasAlphaVantage || hasYahoo;
+
+  if (hasPrimary && hasNasdaq) {
+    return quote.multiSourceAgree
+      ? "multi_source_agreement"
+      : "multi_source_partial";
+  }
+
+  return null;
+}
+
 export function classifySourceQuality(quote?: {
   source?: string | null;
   multiSourceAgree?: boolean;
@@ -91,16 +117,24 @@ export function classifySourceQuality(quote?: {
     return "unavailable";
   }
 
+  const source = quote.source ?? "";
+
+  const composite = classifyCompositeSourceQuality({
+    source,
+    multiSourceAgree: quote.multiSourceAgree,
+  });
+  if (composite) {
+    return composite;
+  }
+
   if (quote.multiSourceAgree) {
     return "multi_source_agreement";
   }
 
-  const source = quote.source ?? "";
-
-  if (isFinnhubSource(source) && !source.includes("Nasdaq")) {
+  if (isFinnhubSource(source)) {
     return "finnhub_only";
   }
-  if (isAlphaVantageSource(source) && !source.includes("Nasdaq")) {
+  if (isAlphaVantageSource(source)) {
     return "alpha_vantage_only";
   }
   if (isYahooSource(source) && isFinvizSource(source)) {
@@ -182,10 +216,7 @@ export function resolveSourceQuality(
       multiSourceAgree: false,
       fallbackOnly: false,
       source: `${baseSourceLabel(primaryApi.source)} + Nasdaq`,
-      sourceQuality: classifySourceQuality({
-        source: primaryApi.source,
-        price: primaryApi.price,
-      }),
+      sourceQuality: "multi_source_partial",
     };
   }
 
@@ -209,6 +240,9 @@ export function computeQuoteConfidence(input: {
 
   if (input.multiSourceAgree || input.sourceQuality === "multi_source_agreement") {
     return 95;
+  }
+  if (input.sourceQuality === "multi_source_partial") {
+    return 85;
   }
   if (input.sourceQuality === "nasdaq_only") {
     return 70;

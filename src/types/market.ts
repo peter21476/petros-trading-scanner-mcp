@@ -183,6 +183,7 @@ export type DataFreshness = "fresh" | "stale";
 
 export type SourceQuality =
   | "multi_source_agreement"
+  | "multi_source_partial"
   | "finnhub_only"
   | "alpha_vantage_only"
   | "yahoo_only"

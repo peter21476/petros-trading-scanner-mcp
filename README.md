@@ -194,8 +194,8 @@ Watchlist signals and semiconductor strength include extra fields so you can san
 | `quoteSource` | e.g. `Yahoo Finance`, `Nasdaq`, `Finviz topGainers` |
 | `quoteValidated` | `true` when price, change, and % are internally consistent |
 | `dataFreshness` | `"fresh"` or `"stale"` — based on `asOf` age (≤3 days = fresh) |
-| `sourceQuality` | `"multi_source_agreement"`, `"finnhub_only"`, `"alpha_vantage_only"`, `"nasdaq_only"`, `"finviz_only"`, etc. |
-| `confidence` | Primary+Nasdaq agreement=95, Nasdaq only=70, Finviz only=55 |
+| `sourceQuality` | `"multi_source_agreement"`, `"multi_source_partial"`, `"finnhub_only"`, `"nasdaq_only"`, `"finviz_only"`, etc. |
+| `confidence` | Primary+Nasdaq agreement=95, partial agreement=85, Nasdaq only=70, Finviz only=55 |
 | `isDelayed` | `true` for Finviz-only fallback quotes (change % only) |
 
 **Parser note:** Nasdaq quotes use `primaryData.lastSalePrice` — not market cap, 52-week high, or volume. If a price looks wrong, check `previousClose` and `asOf`: when change % looks realistic but the level seems off, the upstream feed (Yahoo/Nasdaq) may be reporting a different session or a forward-dated close. Cross-check with your broker.
