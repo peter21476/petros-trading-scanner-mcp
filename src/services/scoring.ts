@@ -421,11 +421,12 @@ export function scoreWatchlistSymbol(input: {
   if (quote?.quoteValidated === false) {
     riskFlags.push("Quote fields were reconciled — verify price against broker");
   }
-  if (quote?.asOf) {
-    const ageMs = Date.now() - Date.parse(quote.asOf);
-    if (!Number.isNaN(ageMs) && ageMs > 2 * 24 * 60 * 60 * 1000) {
-      riskFlags.push(`Quote may be stale (as of ${quote.asOf})`);
-    }
+  if (quote?.dataFreshness === "stale") {
+    riskFlags.push(
+      quote?.asOf
+        ? `Quote data is stale (as of ${quote.asOf})`
+        : "Quote data is stale or missing timestamp",
+    );
   }
 
   score = clampScore(score);
@@ -451,6 +452,7 @@ export function scoreWatchlistSymbol(input: {
     asOf: quote?.asOf ?? null,
     isDelayed: quote?.isDelayed ?? false,
     quoteValidated: quote?.quoteValidated ?? false,
+    dataFreshness: quote?.dataFreshness ?? "stale",
     headline: headline ?? null,
     inFinvizLists: finvizLists,
   };

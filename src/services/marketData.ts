@@ -1,3 +1,7 @@
+import {
+  computeAggregateDataFreshness,
+  computeDataFreshness,
+} from "../utils/dataFreshness.js";
 import { CACHE_TTL, getCached } from "./cache.js";
 import { fetchFinvizEarnings, fetchFinvizHomepage, safeFetchFinvizHomepage } from "./finviz.js";
 import {
@@ -418,6 +422,9 @@ export async function getWatchlistSignals(
 
     return {
       timestamp: new Date().toISOString(),
+      dataFreshness: computeAggregateDataFreshness(
+        signals.map((signal) => signal.dataFreshness),
+      ),
       warnings,
       signals,
     };
@@ -509,8 +516,16 @@ export async function getDailyBriefing(input: {
       semiResult.summary,
     ];
 
+    const dataFreshness = computeAggregateDataFreshness([
+      computeDataFreshness({ timestamp: futuresResult.timestamp }),
+      computeDataFreshness({ timestamp: premarket.timestamp }),
+      computeDataFreshness({ timestamp: breadthResult.timestamp }),
+      ...watchlistSignals.signals.map((signal) => signal.dataFreshness),
+    ]);
+
     return {
       timestamp: new Date().toISOString(),
+      dataFreshness,
       marketBias: marketBiasResult.bias,
       confidence: marketBiasResult.confidence,
       summary: summaryParts.join(" "),

@@ -1,5 +1,6 @@
 import { logger } from "./logger.js";
 import type { YahooQuote } from "../types/market.js";
+import { computeDataFreshness } from "./dataFreshness.js";
 
 const QUOTE_TOLERANCE_PERCENT = 0.75;
 
@@ -120,5 +121,9 @@ export function finalizeQuote(
     changePercent: reconciled.changePercent,
     previousClose: reconciled.previousClose,
     quoteValidated: reconciled.quoteValidated,
+    dataFreshness: computeDataFreshness({
+      asOf: base.asOf,
+      isDelayed: base.isDelayed,
+    }),
   };
 }

@@ -157,6 +157,8 @@ export interface EarningsCalendarResponse {
   earnings: EarningsEntry[];
 }
 
+export type DataFreshness = "fresh" | "stale";
+
 export interface WatchlistSignal {
   symbol: string;
   score: number;
@@ -171,12 +173,14 @@ export interface WatchlistSignal {
   asOf?: string | null;
   isDelayed?: boolean;
   quoteValidated?: boolean;
+  dataFreshness?: DataFreshness;
   headline?: string | null;
   inFinvizLists?: string[];
 }
 
 export interface WatchlistSignalsResponse {
   timestamp: string;
+  dataFreshness: DataFreshness;
   warnings?: string[];
   signals: WatchlistSignal[];
 }
@@ -189,6 +193,7 @@ export interface SectorNotes {
 
 export interface DailyBriefingResponse {
   timestamp: string;
+  dataFreshness: DataFreshness;
   marketBias: "bullish" | "neutral" | "bearish";
   confidence: number;
   summary: string;
@@ -224,6 +229,7 @@ export interface YahooQuote {
   asOf?: string | null;
   isDelayed?: boolean;
   quoteValidated?: boolean;
+  dataFreshness?: DataFreshness;
 }
 
 export interface FinvizHomepageData {
