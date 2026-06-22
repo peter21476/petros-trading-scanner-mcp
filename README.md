@@ -1,0 +1,162 @@
+# Petros Trading Scanner MCP
+
+Read-only **Model Context Protocol (MCP)** server for short-term stock and ETF **market research**. It helps ChatGPT analyze futures, premarket movers, market breadth, sector strength, earnings, watchlist signals, and daily briefings.
+
+**This server does not place trades.** Trade execution is handled separately (e.g. Robinhood). It does not store personal data or broker credentials.
+
+## Features
+
+| Tool | Description |
+|------|-------------|
+| `get_futures` | Nasdaq 100, S&P 500, Dow, Russell 2000, crude, gold, Bitcoin |
+| `get_premarket_movers` | Leaders, laggards, most active (MarketWatch → Finviz fallback) |
+| `get_market_breadth` | Finviz advancing/declining, highs/lows, SMA50/SMA200 |
+| `get_finviz_snapshot` | Homepage-style snapshot: movers, news, headlines, breadth, futures |
+| `get_earnings_calendar` | Upcoming earnings (Finviz API) |
+| `get_watchlist_signals` | Transparent 0–10 scores, bias, reasons, risk flags |
+| `get_daily_briefing` | Full briefing for ChatGPT with sector notes and suggested questions |
+
+### Data sources (free/public)
+
+1. **Finviz** — futures, breadth, snapshot, earnings API
+2. **Yahoo Finance** — chart API for quotes/futures fallback and headlines
+3. **MarketWatch** — premarket movers (optional; falls back to Finviz if blocked)
+
+Caching: **5 minutes** for market data, **15 minutes** for daily briefings.
+
+---
+
+## Local development
+
+### Prerequisites
+
+- Node.js 20+
+- npm
+
+### Setup
+
+```bash
+git clone <your-repo-url>
+cd mcp-trading
+cp .env.example .env
+npm install
+npm run dev
+```
+
+Server starts on `http://localhost:3000` by default.
+
+- Health: `GET /health`
+- MCP: `POST /mcp` (Streamable HTTP)
+
+### Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `npm run dev` | Development with hot reload (`tsx watch`) |
+| `npm run build` | Compile TypeScript to `dist/` |
+| `npm start` | Run production build |
+
+### Optional API key
+
+Set `MCP_SERVER_API_KEY` in `.env`. When set, all `/mcp` routes require:
+
+```http
+Authorization: Bearer <your-key>
+```
+
+---
+
+## Deploy to Heroku
+
+```bash
+heroku create petros-trading-scanner
+heroku config:set MCP_SERVER_API_KEY=your-secret-key
+git push heroku main
+```
+
+Heroku sets `PORT` automatically. The app binds to `0.0.0.0` and uses `process.env.PORT`.
+
+Verify deployment:
+
+```bash
+curl https://petros-trading-scanner.herokuapp.com/health
+```
+
+---
+
+## Connect to ChatGPT Developer Mode
+
+1. Deploy the server (Heroku or another HTTPS host).
+2. In **ChatGPT → Settings → Connectors / Developer Mode**, add a custom MCP server.
+3. Use your public MCP URL, for example:
+   - `https://petros-trading-scanner.herokuapp.com/mcp`
+4. If you configured `MCP_SERVER_API_KEY`, add the Bearer token in the connector auth settings.
+
+The server implements **Streamable HTTP** (`POST /mcp`) compatible with ChatGPT Apps / Developer Mode.
+
+---
+
+## Example prompts
+
+- "Use my Trading Scanner MCP to get today's daily briefing."
+- "Check futures and premarket movers."
+- "Analyze SOXL based on semiconductor strength."
+- "Give me a market bias for today."
+- "Run watchlist signals for SOXL, MU, NVDA, AMD, AVGO, INTC, MRVL, WDC."
+
+### Example: daily briefing tool input
+
+```json
+{
+  "focusSymbols": ["SOXL", "MU", "NVDA", "AMD", "AVGO", "INTC", "MRVL", "WDC"],
+  "portfolioContext": "Optional free text, e.g. holding SOXL from $50 starter account"
+}
+```
+
+---
+
+## Scoring (transparent, not advice)
+
+Market bias uses:
+
+- Nasdaq 100 futures ±0.5%
+- S&P 500 futures ±0.3%
+- Advancing/declining breadth above 55%
+
+Semiconductor strength tracks NVDA, AMD, MU, AVGO, INTC, MRVL, WDC, TSM, AMAT, LRCX, SMCI. **Strong** if 5+ are positive premarket or in major news.
+
+SOXL scoring considers semiconductor strength + Nasdaq futures direction. Leveraged ETF risk flags are always included.
+
+**The tools return data, scores, and reasons only — not buy/sell recommendations.** ChatGPT interprets the output; you make your own decisions.
+
+---
+
+## Project structure
+
+```text
+src/
+  index.ts
+  server.ts
+  mcp/
+    tools.ts
+    schemas.ts
+  services/
+    finviz.ts
+    marketwatch.ts
+    yahoo.ts
+    scoring.ts
+    marketData.ts
+    cache.ts
+    http.ts
+  types/
+    market.ts
+  utils/
+    parseNumber.ts
+    logger.ts
+```
+
+---
+
+## Disclaimer
+
+**Development note:** This is a research assistant only. It does not provide financial advice and does not place trades. Market data may be delayed or incomplete. Always verify quotes and consult your own judgment before trading.
