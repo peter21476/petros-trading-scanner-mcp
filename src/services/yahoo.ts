@@ -9,6 +9,7 @@ import {
   YAHOO_FUTURES_SYMBOLS,
 } from "../types/market.js";
 import { logger } from "../utils/logger.js";
+import { finalizeQuote } from "../utils/quoteValidation.js";
 
 interface YahooScreenerQuote {
   symbol?: string;
@@ -104,6 +105,7 @@ interface YahooChartMeta {
   previousClose?: number;
   preMarketPrice?: number;
   regularMarketVolume?: number;
+  regularMarketTime?: number;
   shortName?: string;
   longName?: string;
 }
@@ -175,11 +177,12 @@ export async function fetchYahooQuote(symbol: string): Promise<YahooQuote | null
           ((meta.preMarketPrice - previousClose) / previousClose) * 100;
       }
 
-      return {
+      return finalizeQuote({
         symbol: (meta.symbol ?? symbol).toUpperCase(),
         price: quote.last,
         change: quote.change,
         changePercent: quote.changePercent,
+        previousClose,
         preMarketPrice: meta.preMarketPrice ?? null,
         preMarketChangePercent:
           preMarketChangePercent == null
@@ -188,7 +191,12 @@ export async function fetchYahooQuote(symbol: string): Promise<YahooQuote | null
         volume: meta.regularMarketVolume ?? null,
         shortName: meta.shortName ?? meta.longName ?? symbol,
         source: "Yahoo Finance",
-      };
+        asOf:
+          meta.regularMarketTime != null
+            ? new Date(meta.regularMarketTime * 1000).toISOString()
+            : null,
+        isDelayed: false,
+      });
     },
     { skipCacheWhen: (value) => value == null },
   );

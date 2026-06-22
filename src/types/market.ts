@@ -165,8 +165,12 @@ export interface WatchlistSignal {
   riskFlags: string[];
   price?: number | null;
   changePercent?: number | null;
+  previousClose?: number | null;
   volume?: number | null;
   quoteSource?: string | null;
+  asOf?: string | null;
+  isDelayed?: boolean;
+  quoteValidated?: boolean;
   headline?: string | null;
   inFinvizLists?: string[];
 }
@@ -211,11 +215,15 @@ export interface YahooQuote {
   price: number | null;
   change: number | null;
   changePercent: number | null;
+  previousClose?: number | null;
   preMarketPrice: number | null;
   preMarketChangePercent: number | null;
   volume: number | null;
   shortName: string | null;
   source?: string;
+  asOf?: string | null;
+  isDelayed?: boolean;
+  quoteValidated?: boolean;
 }
 
 export interface FinvizHomepageData {

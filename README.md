@@ -153,6 +153,22 @@ Semiconductor strength tracks NVDA, AMD, MU, AVGO, INTC, MRVL, WDC, TSM, AMAT, L
 
 SOXL scoring considers semiconductor strength + Nasdaq futures direction. Leveraged ETF risk flags are always included.
 
+### Quote verification
+
+Watchlist signals and semiconductor strength include extra fields so you can sanity-check prices:
+
+| Field | Meaning |
+| --- | --- |
+| `price` | Last regular (or premarket) sale from Yahoo/Nasdaq |
+| `previousClose` | Prior session close used to compute change % |
+| `changePercent` | Derived from `price` vs `previousClose` (or source-reported) |
+| `asOf` | ISO timestamp of the quote (when available) |
+| `quoteSource` | e.g. `Yahoo Finance`, `Nasdaq`, `Finviz topGainers` |
+| `quoteValidated` | `true` when price, change, and % are internally consistent |
+| `isDelayed` | `true` for Finviz-only fallback quotes (change % only) |
+
+**Parser note:** Nasdaq quotes use `primaryData.lastSalePrice` — not market cap, 52-week high, or volume. If a price looks wrong, check `previousClose` and `asOf`: when change % looks realistic but the level seems off, the upstream feed (Yahoo/Nasdaq) may be reporting a different session or a forward-dated close. Cross-check with your broker.
+
 **The tools return data, scores, and reasons only — not buy/sell recommendations.** ChatGPT interprets the output; you make your own decisions.
 
 ---
@@ -179,6 +195,8 @@ src/
   utils/
     parseNumber.ts
     logger.ts
+    quoteValidation.ts
+    newsAnalysis.ts
 ```
 
 ---

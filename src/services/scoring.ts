@@ -418,6 +418,16 @@ export function scoreWatchlistSymbol(input: {
     reasons.push("Overall market bias is bearish");
   }
 
+  if (quote?.quoteValidated === false) {
+    riskFlags.push("Quote fields were reconciled — verify price against broker");
+  }
+  if (quote?.asOf) {
+    const ageMs = Date.now() - Date.parse(quote.asOf);
+    if (!Number.isNaN(ageMs) && ageMs > 2 * 24 * 60 * 60 * 1000) {
+      riskFlags.push(`Quote may be stale (as of ${quote.asOf})`);
+    }
+  }
+
   score = clampScore(score);
 
   let bias: WatchlistSignal["bias"] = "neutral";
@@ -435,8 +445,12 @@ export function scoreWatchlistSymbol(input: {
     riskFlags,
     price: quote?.price ?? null,
     changePercent,
+    previousClose: quote?.previousClose ?? null,
     volume: quote?.volume ?? null,
     quoteSource: quote?.source ?? null,
+    asOf: quote?.asOf ?? null,
+    isDelayed: quote?.isDelayed ?? false,
+    quoteValidated: quote?.quoteValidated ?? false,
     headline: headline ?? null,
     inFinvizLists: finvizLists,
   };

@@ -3,6 +3,7 @@ import { safeFetchJson } from "./http.js";
 import { fetchYahooQuote } from "./yahoo.js";
 import type { FinvizHomepageData, SnapshotStock, YahooQuote } from "../types/market.js";
 import { parseNumber, parsePercent, parseVolume, signedChange } from "../utils/parseNumber.js";
+import { finalizeQuote } from "../utils/quoteValidation.js";
 import { logger } from "../utils/logger.js";
 
 const SPARK_BATCH_SIZE = 8;
@@ -16,6 +17,7 @@ interface YahooSparkMeta {
   previousClose?: number;
   preMarketPrice?: number;
   regularMarketVolume?: number;
+  regularMarketTime?: number;
   shortName?: string;
   longName?: string;
 }
@@ -41,8 +43,21 @@ interface NasdaqQuoteResponse {
       netChange?: string;
       percentageChange?: string;
       volume?: string;
+      lastTradeTimestamp?: string;
+      isRealTime?: boolean;
     };
   };
+}
+
+function parseNasdaqTimestamp(value?: string): string | null {
+  if (!value) {
+    return null;
+  }
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) {
+    return value;
+  }
+  return new Date(parsed).toISOString();
 }
 
 const NASDAQ_HEADERS = {
@@ -94,17 +109,25 @@ function metaToQuote(meta: YahooSparkMeta, source: string): YahooQuote | null {
     return null;
   }
 
-  return {
+  const asOf =
+    meta.regularMarketTime != null
+      ? new Date(meta.regularMarketTime * 1000).toISOString()
+      : null;
+
+  return finalizeQuote({
     symbol,
     price,
     change,
     changePercent,
+    previousClose,
     preMarketPrice: meta.preMarketPrice ?? null,
     preMarketChangePercent,
     volume: meta.regularMarketVolume ?? null,
     shortName: meta.shortName ?? meta.longName ?? symbol,
     source,
-  };
+    asOf,
+    isDelayed: false,
+  });
 }
 
 async function fetchYahooSparkChunk(
@@ -244,22 +267,27 @@ async function fetchNasdaqQuote(
   const changePercent = parsePercent(primary.percentageChange);
   const change = signedChange(primary.netChange);
   const volume = parseVolume(primary.volume ?? null);
+  const previousClose =
+    price != null && change != null ? Number((price - change).toFixed(4)) : null;
 
   if (price == null && changePercent == null) {
     return null;
   }
 
-  return {
+  return finalizeQuote({
     symbol: symbol.toUpperCase(),
     price,
     change,
     changePercent,
+    previousClose,
     preMarketPrice: null,
     preMarketChangePercent: changePercent,
     volume,
     shortName: data?.data?.companyName ?? symbol,
     source: "Nasdaq",
-  };
+    asOf: parseNasdaqTimestamp(primary.lastTradeTimestamp),
+    isDelayed: primary.isRealTime === false,
+  });
 }
 
 async function fetchNasdaqQuoteWithFallback(symbol: string): Promise<YahooQuote | null> {
@@ -290,11 +318,12 @@ function buildFinvizQuoteIndex(
         change = Number(((price * changePercent) / 100).toFixed(4));
       }
 
-      map.set(symbol, {
+      map.set(symbol, finalizeQuote({
         symbol,
         price,
         change,
         changePercent,
+        previousClose: null,
         preMarketPrice: null,
         preMarketChangePercent: changePercent,
         volume: item.volume ?? existing?.volume ?? null,
@@ -302,7 +331,9 @@ function buildFinvizQuoteIndex(
         source: existing?.source
           ? `${existing.source} + Finviz ${listName}`
           : `Finviz ${listName}`,
-      });
+        asOf: null,
+        isDelayed: true,
+      }));
     }
   };
 
@@ -335,11 +366,12 @@ async function fetchMissingQuotesIndividually(
   const map = new Map<string, YahooQuote>();
 
   for (const symbol of symbols) {
-    let quote = await fetchNasdaqQuoteWithFallback(symbol);
+    // Prefer Yahoo (same feed most brokers mirror) before Nasdaq fallback.
+    let quote = await fetchYahooQuote(symbol);
 
-    if (!quote || (quote.price == null && quote.changePercent == null)) {
-      const yahooQuote = await fetchYahooQuote(symbol);
-      quote = mergeQuote(yahooQuote ?? undefined, quote ?? undefined) ?? quote;
+    if (!quote || quote.price == null) {
+      const nasdaqQuote = await fetchNasdaqQuoteWithFallback(symbol);
+      quote = mergeQuote(quote ?? undefined, nasdaqQuote ?? undefined) ?? quote;
     }
 
     if (quote) {
@@ -368,34 +400,45 @@ function mergeQuote(
     return primary;
   }
 
-  const price = primary.price ?? fallback.price;
-  const changePercent =
-    primary.preMarketChangePercent ??
-    primary.changePercent ??
-    fallback.preMarketChangePercent ??
-    fallback.changePercent ??
-    null;
+  const preferPrimary =
+    primary.source?.includes("Yahoo") ||
+    (!fallback.source?.includes("Yahoo") && primary.price != null);
 
-  let change = primary.change ?? fallback.change ?? null;
-  if (change == null && price != null && changePercent != null) {
-    change = Number(((price * changePercent) / 100).toFixed(4));
+  const chosen = preferPrimary ? primary : fallback;
+  const other = preferPrimary ? fallback : primary;
+
+  const price = chosen.price ?? other.price;
+  const changePercent =
+    chosen.preMarketChangePercent ??
+    chosen.changePercent ??
+    other.preMarketChangePercent ??
+    other.changePercent ??
+    null;
+  const previousClose = chosen.previousClose ?? other.previousClose ?? null;
+
+  let change = chosen.change ?? other.change ?? null;
+  if (change == null && price != null && previousClose != null) {
+    change = Number((price - previousClose).toFixed(4));
   }
 
-  return {
-    symbol: primary.symbol,
+  return finalizeQuote({
+    symbol: chosen.symbol,
     price,
     change,
     changePercent,
-    preMarketPrice: primary.preMarketPrice ?? fallback.preMarketPrice,
+    previousClose,
+    preMarketPrice: chosen.preMarketPrice ?? other.preMarketPrice,
     preMarketChangePercent:
-      primary.preMarketChangePercent ?? fallback.preMarketChangePercent,
-    volume: primary.volume ?? fallback.volume,
-    shortName: primary.shortName ?? fallback.shortName,
+      chosen.preMarketChangePercent ?? other.preMarketChangePercent,
+    volume: chosen.volume ?? other.volume,
+    shortName: chosen.shortName ?? other.shortName,
     source:
-      primary.price != null
-        ? primary.source ?? "Yahoo Finance"
-        : fallback.source ?? primary.source ?? "Yahoo Finance",
-  };
+      chosen.price != null && chosen.source
+        ? chosen.source
+        : other.source ?? chosen.source ?? "Yahoo Finance",
+    asOf: chosen.asOf ?? other.asOf ?? null,
+    isDelayed: chosen.isDelayed ?? other.isDelayed ?? false,
+  });
 }
 
 export async function fetchQuotes(
