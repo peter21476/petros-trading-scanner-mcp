@@ -472,9 +472,10 @@ export async function getPositionReview(input: {
   symbol: string;
   costBasis?: number;
   currentValue?: number;
+  portfolioContext?: string;
 }): Promise<PositionReviewResponse> {
   const symbol = input.symbol.toUpperCase();
-  const cacheKey = `tool:position-review:${symbol}:${input.costBasis ?? ""}:${input.currentValue ?? ""}`;
+  const cacheKey = `tool:position-review:${symbol}:${input.costBasis ?? ""}:${input.currentValue ?? ""}:${input.portfolioContext ?? ""}`;
   const needsSemiContext = symbolUsesSemiconductorContext(symbol);
 
   return getCached(cacheKey, CACHE_TTL.MARKET_DATA_MS, async () => {
@@ -544,6 +545,7 @@ export async function getPositionReview(input: {
       symbol,
       costBasis: input.costBasis,
       currentValue: input.currentValue,
+      portfolioContext: input.portfolioContext,
       signal,
       marketBias,
       semiconductorStrength,

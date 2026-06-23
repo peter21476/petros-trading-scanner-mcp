@@ -116,6 +116,30 @@ export interface PortfolioNote {
 
 export type PositionAction = "hold" | "add" | "trim" | "exit";
 
+export interface PositionReviewAccount {
+  costBasis?: number;
+  currentValue?: number;
+  pnlPercent?: number | null;
+  portfolioContext?: string;
+}
+
+export interface PositionReviewMarketBias {
+  bias: "bullish" | "neutral" | "bearish";
+  confidence: number;
+  reasons: string[];
+}
+
+export interface PositionReviewSectorStrength {
+  applicable: boolean;
+  sectorScore?: number;
+  strength?: "strong" | "mixed" | "weak";
+  bias?: "bullish" | "neutral" | "bearish";
+  confidence?: number;
+  leaders?: string[];
+  laggards?: string[];
+  summary?: string;
+}
+
 export interface PositionReviewResponse {
   timestamp: string;
   symbol: string;
@@ -128,6 +152,10 @@ export interface PositionReviewResponse {
   strengths: string[];
   risks: string[];
   signalScore?: number;
+  account: PositionReviewAccount;
+  marketBias: PositionReviewMarketBias;
+  sectorStrength: PositionReviewSectorStrength;
+  watchlistSignal: WatchlistSignal;
   sources?: {
     quoteSource?: string | null;
     semiconductorSource?: string | null;

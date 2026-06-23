@@ -166,6 +166,7 @@ export function registerTools(server: McpServer): void {
         symbol: positionReviewInputSchema.shape.symbol,
         costBasis: positionReviewInputSchema.shape.costBasis,
         currentValue: positionReviewInputSchema.shape.currentValue,
+        portfolioContext: positionReviewInputSchema.shape.portfolioContext,
       },
     },
     async (input) => {

@@ -15,7 +15,7 @@ Read-only **Model Context Protocol (MCP)** server for short-term stock and ETF *
 | `get_earnings_calendar` | Upcoming earnings (Finviz API) |
 | `get_watchlist_signals` | Transparent 0–10 scores, bias, reasons, risk flags |
 | `get_semiconductor_strength` | Sector score, bias, confidence, leaders/laggards for 11 semi names (SOXL workflow) |
-| `get_position_review` | Single-position review for any symbol: action, confidence, thesis, strengths, risks |
+| `get_position_review` | Single-position review: action, confidence, thesis, strengths, risks — plus market bias, sector strength, watchlist signal, and account P/L |
 | `get_daily_briefing` | Full briefing with source attribution, confidence, news severity, portfolio notes |
 
 ### Data sources (free/public)
@@ -207,6 +207,28 @@ Watchlist signals and semiconductor strength include extra fields so you can san
 Daily briefings also include top-level `dataFreshness` — aggregated from futures, premarket, breadth, and watchlist quotes (`stale` if any quote is stale; `closed_session` when all quotes reflect the last completed session).
 
 `get_watchlist_signals` returns overall `confidence`, `quoteDiagnostics` (including `rateLimitedSources` and `providersAttempted`).
+
+### `get_position_review`
+
+Combines market bias, semiconductor sector strength (when relevant), watchlist scoring, and optional account data into a single position review.
+
+**Input:**
+```json
+{
+  "symbol": "SOXL",
+  "costBasis": 50,
+  "currentValue": 51.17,
+  "portfolioContext": "Core semi swing position, 3–5 day hold"
+}
+```
+
+**Output highlights:**
+- `action` — `hold`, `add`, `trim`, or `exit` (research framing, not a trade order)
+- `confidence` — weighted from quote quality, watchlist score, market bias, and sector strength
+- `account` — cost basis, current value, P/L %, optional context
+- `marketBias` — bullish/neutral/bearish with confidence and reasons (futures + breadth)
+- `sectorStrength` — semiconductor sector score when symbol is semi-related; otherwise `applicable: false`
+- `watchlistSignal` — full symbol score (0–10), bias, reasons, risk flags, quote metadata
 
 **The tools return data, scores, and reasons only — not buy/sell recommendations.** ChatGPT interprets the output; you make your own decisions.
 

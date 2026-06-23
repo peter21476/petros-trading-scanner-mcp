@@ -646,6 +646,26 @@ function analyzeSymbolReviewContext(
   };
 }
 
+function buildSectorStrengthSection(
+  context: SymbolReviewContext,
+  strength: SemiconductorStrength,
+): PositionReviewResponse["sectorStrength"] {
+  if (context.sectorRelevance === "none") {
+    return { applicable: false };
+  }
+
+  return {
+    applicable: true,
+    sectorScore: strength.sectorScore,
+    strength: strength.strength,
+    bias: strength.bias,
+    confidence: strength.confidence,
+    leaders: strength.leaders.slice(0, 4),
+    laggards: strength.laggards.slice(0, 4),
+    summary: buildSemiconductorSummary(strength),
+  };
+}
+
 function determinePositionAction(input: {
   context: SymbolReviewContext;
   signal: WatchlistSignal;
@@ -662,8 +682,20 @@ function determinePositionAction(input: {
     marketBias.bias === "bearish" &&
     signal.bias === "bearish";
 
+  if (
+    pnlPercent != null &&
+    pnlPercent <= -25 &&
+    (signal.score <= 5 || signal.bias === "bearish")
+  ) {
+    return "exit";
+  }
+
   if (signal.score <= 3.5 || sectorAlignedWeak) {
     return "exit";
+  }
+
+  if (pnlPercent != null && pnlPercent <= -15 && signal.score <= 5.5) {
+    return "trim";
   }
 
   if (
@@ -685,7 +717,8 @@ function determinePositionAction(input: {
     signal.score >= 7.5 &&
     signal.bias === "bullish" &&
     sectorSupportsAdd &&
-    marketBias.bias !== "bearish"
+    marketBias.bias !== "bearish" &&
+    (pnlPercent == null || pnlPercent > -10)
   ) {
     return "add";
   }
@@ -704,6 +737,7 @@ function buildPositionThesis(input: {
   marketBias: BiasResult;
   nasdaqFuturesChange?: number | null;
   pnlPercent: number | null;
+  portfolioContext?: string;
 }): string {
   const {
     context,
@@ -712,6 +746,7 @@ function buildPositionThesis(input: {
     marketBias,
     nasdaqFuturesChange,
     pnlPercent,
+    portfolioContext,
   } = input;
   const { symbol, sectorRelevance } = context;
   const semiStrong = semiconductorStrength.strength === "strong";
@@ -753,6 +788,9 @@ function buildPositionThesis(input: {
   if (pnlPercent != null) {
     thesis += ` Position is ${pnlPercent >= 0 ? "up" : "down"} ${Math.abs(pnlPercent).toFixed(2)}% vs cost basis.`;
   }
+  if (portfolioContext) {
+    thesis += ` Context: ${portfolioContext}`;
+  }
   return thesis;
 }
 
@@ -762,10 +800,15 @@ function buildPositionStrengths(input: {
   semiconductorStrength: SemiconductorStrength;
   marketBias: BiasResult;
   nasdaqFuturesChange?: number | null;
+  pnlPercent: number | null;
 }): string[] {
   const strengths: string[] = [];
-  const { context, signal, semiconductorStrength, marketBias, nasdaqFuturesChange } =
+  const { context, signal, semiconductorStrength, marketBias, nasdaqFuturesChange, pnlPercent } =
     input;
+
+  if (pnlPercent != null && pnlPercent > 0) {
+    strengths.push(`Position up ${pnlPercent.toFixed(2)}% vs cost basis`);
+  }
 
   if (context.sectorRelevance === "semiconductor") {
     if (semiconductorStrength.strength === "strong") {
@@ -823,10 +866,18 @@ function buildPositionRisks(input: {
   semiconductorStrength: SemiconductorStrength;
   marketBias: BiasResult;
   nasdaqFuturesChange?: number | null;
+  pnlPercent: number | null;
 }): string[] {
   const risks: string[] = [...input.signal.riskFlags];
-  const { context, signal, semiconductorStrength, marketBias, nasdaqFuturesChange } =
+  const { context, signal, semiconductorStrength, marketBias, nasdaqFuturesChange, pnlPercent } =
     input;
+
+  if (pnlPercent != null && pnlPercent < 0) {
+    risks.push(`Position down ${Math.abs(pnlPercent).toFixed(2)}% vs cost basis`);
+  }
+  if (pnlPercent != null && pnlPercent >= 20 && signal.score < 7) {
+    risks.push("Large unrealized gain with only moderate symbol momentum");
+  }
 
   if (context.isLeveragedEtf && !risks.some((r) => /leveraged/i.test(r))) {
     risks.push("Leveraged ETF — amplified gains and losses");
@@ -933,6 +984,7 @@ export function reviewPosition(input: {
   symbol: string;
   costBasis?: number;
   currentValue?: number;
+  portfolioContext?: string;
   signal: WatchlistSignal;
   marketBias: BiasResult;
   semiconductorStrength: SemiconductorStrength;
@@ -959,6 +1011,7 @@ export function reviewPosition(input: {
     marketBias: input.marketBias,
     nasdaqFuturesChange: input.nasdaqFuturesChange,
     pnlPercent,
+    portfolioContext: input.portfolioContext,
   });
 
   const strengths = buildPositionStrengths({
@@ -967,6 +1020,7 @@ export function reviewPosition(input: {
     semiconductorStrength: input.semiconductorStrength,
     marketBias: input.marketBias,
     nasdaqFuturesChange: input.nasdaqFuturesChange,
+    pnlPercent,
   });
 
   const risks = buildPositionRisks({
@@ -975,6 +1029,7 @@ export function reviewPosition(input: {
     semiconductorStrength: input.semiconductorStrength,
     marketBias: input.marketBias,
     nasdaqFuturesChange: input.nasdaqFuturesChange,
+    pnlPercent,
   });
 
   const confidence = computePositionConfidence({
@@ -997,6 +1052,19 @@ export function reviewPosition(input: {
     strengths,
     risks,
     signalScore: input.signal.score,
+    account: {
+      costBasis: input.costBasis,
+      currentValue: input.currentValue,
+      pnlPercent,
+      portfolioContext: input.portfolioContext,
+    },
+    marketBias: {
+      bias: input.marketBias.bias,
+      confidence: input.marketBias.confidence,
+      reasons: input.marketBias.reasons,
+    },
+    sectorStrength: buildSectorStrengthSection(context, input.semiconductorStrength),
+    watchlistSignal: input.signal,
     sources: input.sources,
     warnings: input.warnings,
   };
