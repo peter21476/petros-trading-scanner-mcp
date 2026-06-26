@@ -16,6 +16,10 @@ Read-only **Model Context Protocol (MCP)** server for short-term stock and ETF *
 | `get_watchlist_signals` | Transparent 0–10 scores, bias, reasons, risk flags |
 | `get_semiconductor_strength` | Sector score, bias, confidence, leaders/laggards for 11 semi names (SOXL workflow) |
 | `get_position_review` | Single-position review: action, confidence, thesis, strengths, risks — plus market bias, sector strength, watchlist signal, and account P/L |
+| `get_trade_setup` | Aggressive trade setup: entry/stop/targets, risk/reward, catalysts, suggested action (research framework) |
+| `get_portfolio_trade_plan` | Account-aware plan: holdings, concentration risk, trim/hold lists, top trades, session plan |
+| `get_aggressive_watchlist_rankings` | Rank watchlist by near-term opportunity with triggers and stops |
+| `get_intraday_decision_check` | “Should I act now?” — per-symbol intraday decisions after market open |
 | `get_daily_briefing` | Full briefing with source attribution, confidence, news severity, portfolio notes |
 
 ### Data sources (free/public)
@@ -232,6 +236,23 @@ Combines market bias, semiconductor sector strength (when relevant), watchlist s
 
 **The tools return data, scores, and reasons only — not buy/sell recommendations.** ChatGPT interprets the output; you make your own decisions.
 
+### Aggressive trading tools (research framework)
+
+All four tools include timestamps, data sources, disclaimers, and quote freshness warnings.
+
+| Tool | Purpose |
+|------|---------|
+| `get_trade_setup` | One-symbol setup: entry zone, stop, targets, R/R, catalysts, `suggestedAction` |
+| `get_aggressive_watchlist_rankings` | Rank symbols by `aggressiveBuyScore` (0–10) and `probabilityScore` (0–100) |
+| `get_intraday_decision_check` | Post-open go/no-go with `actNow`, triggers, and `actionWindow` |
+| `get_portfolio_trade_plan` | Full account plan from `account_number` (API or `accountContext` fallback) |
+
+**Scoring:** `aggressiveBuyScore` 0–2 avoid, 3–4 watch, 5–6 needs confirmation, 7–8 actionable, 9–10 high conviction.
+
+**Portfolio API (optional):** Set `PORTFOLIO_API_BASE_URL` (+ `PORTFOLIO_API_KEY`) to fetch live holdings. Without it, pass `accountContext` with `equityPositions`, `buyingPower`, and `accountValue`.
+
+Run tests: `npm test`
+
 ---
 
 ## Project structure
@@ -249,6 +270,9 @@ src/
     yahoo.ts
     scoring.ts
     marketData.ts
+    tradeAnalysis.ts
+    tradingTools.ts
+    portfolio.ts
     cache.ts
     http.ts
   types/

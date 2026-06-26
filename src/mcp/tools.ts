@@ -2,8 +2,12 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   dailyBriefingInputSchema,
   earningsCalendarInputSchema,
+  aggressiveWatchlistRankingsInputSchema,
+  intradayDecisionCheckInputSchema,
+  portfolioTradePlanInputSchema,
   positionReviewInputSchema,
   premarketMoversInputSchema,
+  tradeSetupInputSchema,
   watchlistSignalsInputSchema,
 } from "./schemas.js";
 import {
@@ -17,6 +21,12 @@ import {
   getSemiconductorStrength,
   getWatchlistSignals,
 } from "../services/marketData.js";
+import {
+  getAggressiveWatchlistRankings,
+  getIntradayDecisionCheck,
+  getPortfolioTradePlan,
+  getTradeSetup,
+} from "../services/tradingTools.js";
 
 function jsonResult(data: unknown) {
   return {
@@ -196,6 +206,90 @@ export function registerTools(server: McpServer): void {
         return jsonResult(await getDailyBriefing(parsed));
       } catch (error) {
         return errorResult(`get_daily_briefing failed: ${String(error)}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    "get_trade_setup",
+    {
+      description:
+        "Aggressive short-term trade setup for one symbol: entry zone, stop loss, profit targets, risk/reward, catalysts, and suggested action. Research/trading framework only — not financial advice.",
+      inputSchema: {
+        symbol: tradeSetupInputSchema.shape.symbol,
+        accountContext: tradeSetupInputSchema.shape.accountContext,
+      },
+    },
+    async (input) => {
+      try {
+        const parsed = tradeSetupInputSchema.parse(input);
+        return jsonResult(await getTradeSetup(parsed));
+      } catch (error) {
+        return errorResult(`get_trade_setup failed: ${String(error)}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    "get_portfolio_trade_plan",
+    {
+      description:
+        "Portfolio-aware trading plan using account positions and buying power. Fetches portfolio via PORTFOLIO_API_BASE_URL or accepts accountContext fallback. Read-only — does not place trades.",
+      inputSchema: {
+        accountNumber: portfolioTradePlanInputSchema.shape.accountNumber,
+        accountContext: portfolioTradePlanInputSchema.shape.accountContext,
+        timeframe: portfolioTradePlanInputSchema.shape.timeframe,
+      },
+    },
+    async (input) => {
+      try {
+        const parsed = portfolioTradePlanInputSchema.parse(input);
+        return jsonResult(await getPortfolioTradePlan(parsed));
+      } catch (error) {
+        return errorResult(`get_portfolio_trade_plan failed: ${String(error)}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    "get_aggressive_watchlist_rankings",
+    {
+      description:
+        "Rank a watchlist by near-term aggressive profit opportunity with entry triggers, stops, targets, and setup types. Research framework only.",
+      inputSchema: {
+        symbols: aggressiveWatchlistRankingsInputSchema.shape.symbols,
+        timeframe: aggressiveWatchlistRankingsInputSchema.shape.timeframe,
+      },
+    },
+    async (input) => {
+      try {
+        const parsed = aggressiveWatchlistRankingsInputSchema.parse(input);
+        return jsonResult(await getAggressiveWatchlistRankings(parsed));
+      } catch (error) {
+        return errorResult(
+          `get_aggressive_watchlist_rankings failed: ${String(error)}`,
+        );
+      }
+    },
+  );
+
+  server.registerTool(
+    "get_intraday_decision_check",
+    {
+      description:
+        "After market open: should I act now? Returns per-symbol intraday decisions, market condition, action window, and top items to watch. Read-only research.",
+      inputSchema: {
+        symbols: intradayDecisionCheckInputSchema.shape.symbols,
+        accountNumber: intradayDecisionCheckInputSchema.shape.accountNumber,
+        accountContext: intradayDecisionCheckInputSchema.shape.accountContext,
+      },
+    },
+    async (input) => {
+      try {
+        const parsed = intradayDecisionCheckInputSchema.parse(input);
+        return jsonResult(await getIntradayDecisionCheck(parsed));
+      } catch (error) {
+        return errorResult(`get_intraday_decision_check failed: ${String(error)}`);
       }
     },
   );
