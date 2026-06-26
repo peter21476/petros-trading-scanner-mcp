@@ -1,9 +1,19 @@
-import { withYahooThrottle, YAHOO_SPARK_HEADERS } from "./yahooSpark.js";
+import { withYahooThrottle } from "./yahooSpark.js";
 import {
   isYahooRateLimited,
   markYahooRateLimited,
 } from "../utils/yahooRateLimit.js";
 import { logger } from "../utils/logger.js";
+import {
+  expirationDateToUnix,
+  fetchRobinhoodOptionExpirations,
+} from "./robinhoodOptions.js";
+import {
+  clearYahooAuthCache,
+  getYahooAuth,
+  YAHOO_OPTIONS_USER_AGENT,
+  yahooAuthenticatedGet,
+} from "./yahooCrumb.js";
 import type { OptionsFlowItem } from "../types/marketResearch.js";
 
 interface YahooOptionContract {
@@ -11,6 +21,8 @@ interface YahooOptionContract {
   openInterest?: number;
   volume?: number;
   ask?: number;
+  bid?: number;
+  lastPrice?: number;
 }
 
 interface YahooOptionsResult {
@@ -29,6 +41,11 @@ interface YahooOptionsResponse {
   };
 }
 
+const YAHOO_OPTIONS_HOSTS = [
+  "query2.finance.yahoo.com",
+  "query1.finance.yahoo.com",
+] as const;
+
 const MAX_EXPIRATIONS = 4;
 const MAX_RESULTS = 20;
 
@@ -40,6 +57,27 @@ function formatExpiration(unixSeconds: number): string {
   return new Date(unixSeconds * 1000).toISOString().slice(0, 10);
 }
 
+function contractPrice(contract: YahooOptionContract): number | null {
+  if (isValidNumber(contract.ask) && contract.ask > 0) {
+    return contract.ask;
+  }
+  if (isValidNumber(contract.lastPrice) && contract.lastPrice > 0) {
+    return contract.lastPrice;
+  }
+  if (
+    isValidNumber(contract.bid) &&
+    isValidNumber(contract.ask) &&
+    contract.bid > 0 &&
+    contract.ask > 0
+  ) {
+    return (contract.bid + contract.ask) / 2;
+  }
+  if (isValidNumber(contract.bid) && contract.bid > 0) {
+    return contract.bid;
+  }
+  return null;
+}
+
 export function contractToFlowItem(
   symbol: string,
   expiration: string,
@@ -49,7 +87,7 @@ export function contractToFlowItem(
 ): OptionsFlowItem | null {
   const volume = contract.volume;
   const openInterest = contract.openInterest;
-  const ask = contract.ask;
+  const price = contractPrice(contract);
   const strike = contract.strike;
 
   if (
@@ -58,12 +96,12 @@ export function contractToFlowItem(
     !isValidNumber(openInterest) ||
     openInterest <= 0 ||
     !isValidNumber(strike) ||
-    !isValidNumber(ask)
+    price == null
   ) {
     return null;
   }
 
-  const premium = Math.round(volume * ask * 100);
+  const premium = Math.round(volume * price * 100);
   if (premium < minPremium) {
     return null;
   }
@@ -79,7 +117,7 @@ export function contractToFlowItem(
     volume: Math.round(volume),
     openInterest: Math.round(openInterest),
     volumeOiRatio,
-    ask: Number(ask.toFixed(4)),
+    ask: Number(price.toFixed(4)),
     premium,
     sentiment: type === "call" ? "bullish" : "bearish",
     timestamp: new Date().toISOString(),
@@ -88,43 +126,115 @@ export function contractToFlowItem(
   };
 }
 
-async function fetchOptionsChain(
+function parseOptionsResponse(data: YahooOptionsResponse): YahooOptionsResult | null {
+  if (data.optionChain?.error?.description) {
+    logger.warn("Yahoo options chain error", {
+      error: data.optionChain.error.description,
+    });
+  }
+  return data.optionChain?.result?.[0] ?? null;
+}
+
+async function fetchOptionsChainOnce(
   symbol: string,
+  host: (typeof YAHOO_OPTIONS_HOSTS)[number],
   expirationTs?: number,
 ): Promise<YahooOptionsResult | null> {
-  if (isYahooRateLimited()) {
+  const auth = await getYahooAuth();
+  if (!auth) {
     return null;
   }
 
-  const dateParam = expirationTs != null ? `?date=${expirationTs}` : "";
-  const url = `https://query2.finance.yahoo.com/v7/finance/options/${encodeURIComponent(symbol)}${dateParam}`;
+  const dateParam = expirationTs != null ? `&date=${expirationTs}` : "";
+  const url = `https://${host}/v7/finance/options/${encodeURIComponent(symbol)}?crumb=${encodeURIComponent(auth.crumb)}${dateParam}`;
 
   const response = await withYahooThrottle(() =>
-    fetch(url, { headers: YAHOO_SPARK_HEADERS }),
+    yahooAuthenticatedGet(url, symbol),
   );
+
+  if (!response) {
+    return null;
+  }
 
   if (response.status === 429) {
     markYahooRateLimited();
     return null;
   }
 
-  if (!response.ok) {
-    logger.warn("Yahoo options chain fetch failed", {
+  if (response.status === 401) {
+    clearYahooAuthCache();
+    logger.warn("Yahoo options unauthorized — invalid cookie/crumb", {
       symbol,
+      host,
+    });
+    return null;
+  }
+
+  if (!response.ok) {
+    logger.warn("Yahoo options chain HTTP error", {
+      symbol,
+      host,
       status: response.status,
     });
     return null;
   }
 
   const data = (await response.json()) as YahooOptionsResponse;
-  if (data.optionChain?.error?.description) {
-    logger.warn("Yahoo options chain error", {
-      symbol,
-      error: data.optionChain.error.description,
-    });
+  return parseOptionsResponse(data);
+}
+
+async function fetchOptionsChain(
+  symbol: string,
+  expirationTs?: number,
+): Promise<YahooOptionsResult | null> {
+  if (isYahooRateLimited()) {
+    logger.warn("[options_flow] Yahoo rate-limited — skipping options fetch", { symbol });
+    return null;
   }
 
-  return data.optionChain?.result?.[0] ?? null;
+  for (const host of YAHOO_OPTIONS_HOSTS) {
+    const result = await fetchOptionsChainOnce(symbol, host, expirationTs);
+    if (result) {
+      return result;
+    }
+  }
+
+  return null;
+}
+
+function expirationStringsToUnix(dates: string[]): number[] {
+  return dates.map(expirationDateToUnix);
+}
+
+function collectCandidates(
+  symbol: string,
+  chain: YahooOptionsResult,
+  expirationTs: number,
+  minPremium: number,
+): OptionsFlowItem[] {
+  const optionsBlock = chain.options?.[0];
+  if (!optionsBlock) {
+    return [];
+  }
+
+  const expiration = formatExpiration(optionsBlock.expirationDate ?? expirationTs);
+  const items: OptionsFlowItem[] = [];
+
+  for (const call of optionsBlock.calls ?? []) {
+    const item = contractToFlowItem(symbol, expiration, "call", call, minPremium);
+    if (item) {
+      items.push(item);
+    }
+  }
+
+  for (const put of optionsBlock.puts ?? []) {
+    const item = contractToFlowItem(symbol, expiration, "put", put, minPremium);
+    if (item) {
+      items.push(item);
+    }
+  }
+
+  return items;
 }
 
 /**
@@ -140,47 +250,52 @@ export async function fetchYfinanceOptionsFlow(
   ];
 
   try {
-    const base = await fetchOptionsChain(upper);
-    if (!base) {
-      warnings.push(`No options chain data returned for ${upper}`);
-      return { flows: [], warnings };
-    }
+    logger.info("[options_flow] fetching Yahoo options chain", {
+      symbol: upper,
+      userAgent: YAHOO_OPTIONS_USER_AGENT.slice(0, 40),
+    });
 
-    const expirationDates = (base.expirationDates ?? []).slice(0, MAX_EXPIRATIONS);
+    const base = await fetchOptionsChain(upper);
+    let expirationDates = (base?.expirationDates ?? []).slice(0, MAX_EXPIRATIONS);
+
+    logger.info(`[options_flow] ${upper} expirations from yfinance`, {
+      symbol: upper,
+      expirations: expirationDates.map(formatExpiration),
+      count: expirationDates.length,
+    });
+
     if (expirationDates.length === 0) {
-      warnings.push(`No option expirations found for ${upper}`);
-      return { flows: [], warnings };
+      const robinhood = await fetchRobinhoodOptionExpirations(upper);
+      warnings.push(...robinhood.warnings);
+      if (robinhood.expirations.length > 0) {
+        expirationDates = expirationStringsToUnix(robinhood.expirations);
+        warnings.push(
+          `Yahoo returned no expirations; using Robinhood chain dates for ${upper}`,
+        );
+        logger.info(`[options_flow] ${upper} expirations from Robinhood fallback`, {
+          expirations: robinhood.expirations,
+        });
+      } else {
+        warnings.push(`No option expirations found for ${upper}`);
+        return { flows: [], warnings };
+      }
     }
 
     const candidates: OptionsFlowItem[] = [];
 
     for (const expirationTs of expirationDates) {
       const chain =
-        expirationTs === expirationDates[0] && base.options?.[0]
+        base?.expirationDates?.[0] === expirationTs && base.options?.[0]
           ? base
           : await fetchOptionsChain(upper, expirationTs);
-      const optionsBlock = chain?.options?.[0];
-      if (!optionsBlock) {
+      if (!chain) {
+        warnings.push(
+          `Failed to load options chain for ${upper} expiry ${formatExpiration(expirationTs)}`,
+        );
         continue;
       }
 
-      const expiration = formatExpiration(
-        optionsBlock.expirationDate ?? expirationTs,
-      );
-
-      for (const call of optionsBlock.calls ?? []) {
-        const item = contractToFlowItem(upper, expiration, "call", call, minPremium);
-        if (item) {
-          candidates.push(item);
-        }
-      }
-
-      for (const put of optionsBlock.puts ?? []) {
-        const item = contractToFlowItem(upper, expiration, "put", put, minPremium);
-        if (item) {
-          candidates.push(item);
-        }
-      }
+      candidates.push(...collectCandidates(upper, chain, expirationTs, minPremium));
     }
 
     const flows = candidates
@@ -195,9 +310,9 @@ export async function fetchYfinanceOptionsFlow(
 
     return { flows, warnings };
   } catch (error) {
-    warnings.push(
-      `yfinance options fetch failed for ${upper}: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    const message = error instanceof Error ? error.message : String(error);
+    logger.error("[options_flow] yfinance fetch failed", { symbol: upper, error: message });
+    warnings.push(`yfinance options fetch failed for ${upper}: ${message}`);
     return { flows: [], warnings };
   }
 }

@@ -63,4 +63,17 @@ describe("yfinanceOptions", () => {
     assert.equal(item.sentiment, "bearish");
     assert.equal(item.type, "put");
   });
+
+  it("uses lastPrice when ask is missing", () => {
+    const item = contractToFlowItem(
+      "AAPL",
+      "2026-01-01",
+      "call",
+      { strike: 200, volume: 5000, openInterest: 1000, lastPrice: 2.5 },
+      50_000,
+    );
+    assert.ok(item);
+    assert.equal(item.premium, 1_250_000);
+    assert.equal(item.ask, 2.5);
+  });
 });
