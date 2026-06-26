@@ -115,3 +115,29 @@ export type IntradayDecisionCheckInput = z.infer<
   typeof intradayDecisionCheckInputSchema
 >;
 export type BestTradesTodayInput = z.infer<typeof bestTradesTodayInputSchema>;
+
+export const historicalPricesInputSchema = z.object({
+  symbols: z.array(z.string().min(1).max(10)).min(1).max(10),
+  period: z.enum(["1d", "5d", "1mo", "3mo", "6mo", "1y"]).default("1mo"),
+  interval: z.enum(["5m", "15m", "1h", "1d"]).default("1d"),
+});
+
+export const technicalIndicatorsInputSchema = z.object({
+  symbol: z.string().min(1).max(10),
+  interval: z.enum(["1h", "1d"]).default("1d"),
+});
+
+export const tickerNewsInputSchema = z.object({
+  symbol: z.string().min(1).max(10),
+  limit: z.number().int().min(1).max(10).default(5),
+});
+
+export const optionsFlowInputSchema = z.object({
+  symbol: z.string().min(1).max(10).optional(),
+  minPremium: z.number().int().min(1000).default(50_000),
+});
+
+export type HistoricalPricesInput = z.infer<typeof historicalPricesInputSchema>;
+export type TechnicalIndicatorsInput = z.infer<typeof technicalIndicatorsInputSchema>;
+export type TickerNewsInput = z.infer<typeof tickerNewsInputSchema>;
+export type OptionsFlowInput = z.infer<typeof optionsFlowInputSchema>;

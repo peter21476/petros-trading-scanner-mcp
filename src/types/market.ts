@@ -211,7 +211,12 @@ export interface EarningsCalendarResponse {
   earnings: EarningsEntry[];
 }
 
-export type DataFreshness = "fresh" | "delayed" | "stale" | "closed_session";
+export type DataFreshness =
+  | "fresh"
+  | "delayed"
+  | "stale"
+  | "closed_session"
+  | "cached";
 
 export interface ProviderTimestampDebug {
   iso?: string | null;

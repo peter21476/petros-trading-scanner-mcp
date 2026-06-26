@@ -4,10 +4,14 @@ import {
   earningsCalendarInputSchema,
   aggressiveWatchlistRankingsInputSchema,
   bestTradesTodayInputSchema,
+  historicalPricesInputSchema,
   intradayDecisionCheckInputSchema,
+  optionsFlowInputSchema,
   portfolioTradePlanInputSchema,
   positionReviewInputSchema,
   premarketMoversInputSchema,
+  technicalIndicatorsInputSchema,
+  tickerNewsInputSchema,
   tradeSetupInputSchema,
   watchlistSignalsInputSchema,
 } from "./schemas.js";
@@ -29,6 +33,11 @@ import {
   getTradeSetup,
 } from "../services/tradingTools.js";
 import { getBestTradesToday } from "../services/bestTradesToday.js";
+import { getHistoricalPrices } from "../services/historicalPrices.js";
+import { getTechnicalIndicators } from "../services/technicalIndicators.js";
+import { getSectorRotation } from "../services/sectorRotation.js";
+import { getTickerNews } from "../services/tickerNews.js";
+import { getOptionsFlow } from "../services/optionsFlow.js";
 
 function jsonResult(data: unknown) {
   return {
@@ -313,6 +322,107 @@ export function registerTools(server: McpServer): void {
         return jsonResult(await getBestTradesToday(parsed));
       } catch (error) {
         return errorResult(`get_best_trades_today failed: ${String(error)}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    "get_historical_prices",
+    {
+      description:
+        "Fetch OHLCV price history for one or more symbols with 20/50-day SMA distance and 52-week high/low. Uses Finnhub candles when configured, otherwise Yahoo Finance. Read-only.",
+      inputSchema: {
+        symbols: historicalPricesInputSchema.shape.symbols,
+        period: historicalPricesInputSchema.shape.period,
+        interval: historicalPricesInputSchema.shape.interval,
+      },
+    },
+    async (input) => {
+      try {
+        const parsed = historicalPricesInputSchema.parse(input);
+        return jsonResult(
+          await getHistoricalPrices(parsed.symbols, parsed.period, parsed.interval),
+        );
+      } catch (error) {
+        return errorResult(`get_historical_prices failed: ${String(error)}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    "get_technical_indicators",
+    {
+      description:
+        "Return RSI (14), MACD (12/26/9), Bollinger Bands (20), and volume vs 20-day average with interpretation hints. Read-only.",
+      inputSchema: {
+        symbol: technicalIndicatorsInputSchema.shape.symbol,
+        interval: technicalIndicatorsInputSchema.shape.interval,
+      },
+    },
+    async (input) => {
+      try {
+        const parsed = technicalIndicatorsInputSchema.parse(input);
+        return jsonResult(await getTechnicalIndicators(parsed.symbol, parsed.interval));
+      } catch (error) {
+        return errorResult(`get_technical_indicators failed: ${String(error)}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    "get_sector_rotation",
+    {
+      description:
+        "Return today's performance for all 11 S&P 500 sector ETFs (XLK, XLF, XLV, XLE, XLI, XLY, XLP, XLU, XLRE, XLB, XLC) sorted by change % with rotation theme. Read-only.",
+      inputSchema: {},
+    },
+    async () => {
+      try {
+        return jsonResult(await getSectorRotation());
+      } catch (error) {
+        return errorResult(`get_sector_rotation failed: ${String(error)}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    "get_ticker_news",
+    {
+      description:
+        "Fetch and summarize recent news for a ticker with per-article sentiment and overall sentiment score (-1 to +1). Finnhub when configured, Yahoo Finance fallback. Read-only.",
+      inputSchema: {
+        symbol: tickerNewsInputSchema.shape.symbol,
+        limit: tickerNewsInputSchema.shape.limit,
+      },
+    },
+    async (input) => {
+      try {
+        const parsed = tickerNewsInputSchema.parse(input);
+        return jsonResult(await getTickerNews(parsed.symbol, parsed.limit));
+      } catch (error) {
+        return errorResult(`get_ticker_news failed: ${String(error)}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    "get_options_flow",
+    {
+      description:
+        "Return unusual options activity for a symbol or market-wide. Requires UNUSUAL_WHALES_API_TOKEN (paid Unusual Whales API); without it returns empty flows with an explanatory note. Read-only.",
+      inputSchema: {
+        symbol: optionsFlowInputSchema.shape.symbol,
+        minPremium: optionsFlowInputSchema.shape.minPremium,
+      },
+    },
+    async (input) => {
+      try {
+        const parsed = optionsFlowInputSchema.parse(input);
+        return jsonResult(
+          await getOptionsFlow(parsed.symbol, parsed.minPremium),
+        );
+      } catch (error) {
+        return errorResult(`get_options_flow failed: ${String(error)}`);
       }
     },
   );

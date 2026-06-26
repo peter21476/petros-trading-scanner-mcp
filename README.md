@@ -21,6 +21,11 @@ Read-only **Model Context Protocol (MCP)** server for short-term stock and ETF *
 | `get_aggressive_watchlist_rankings` | Rank watchlist by near-term opportunity with triggers and stops |
 | `get_intraday_decision_check` | “Should I act now?” — per-symbol intraday decisions after market open |
 | `get_best_trades_today` | Highest-conviction short-term candidates with transparent sub-scores and optional rotation plan |
+| `get_historical_prices` | OHLCV history with 20/50-day SMA distance and 52-week high/low (Finnhub or Yahoo) |
+| `get_technical_indicators` | RSI, MACD, Bollinger Bands, volume ratio with interpretation hints |
+| `get_sector_rotation` | All 11 S&P 500 sector ETFs ranked by today's performance with rotation theme |
+| `get_ticker_news` | Recent ticker news with per-article sentiment and overall sentiment score |
+| `get_options_flow` | Unusual options activity via Unusual Whales API when `UNUSUAL_WHALES_API_TOKEN` is set |
 | `get_daily_briefing` | Full briefing with source attribution, confidence, news severity, portfolio notes |
 
 ### Data sources (free/public)
@@ -28,10 +33,11 @@ Read-only **Model Context Protocol (MCP)** server for short-term stock and ETF *
 1. **Finviz** — futures, breadth, snapshot, earnings API
 2. **Finnhub** — optional primary quotes when `FINNHUB_API_KEY` is set
 3. **Alpha Vantage** — optional quotes when `ALPHA_VANTAGE_API_KEY` is set
-4. **Nasdaq** — quote provider (price, change %, volume)
-5. **Yahoo Finance** — spark batch only when not rate-limited (30 min cooldown after HTTP 429)
-6. **MarketWatch** — premarket movers (often blocked on cloud hosts with HTTP 401)
-7. **Yahoo Finance screeners** — day gainers/losers/actives when MarketWatch is blocked
+4. **Unusual Whales** — optional options flow when `UNUSUAL_WHALES_API_TOKEN` is set (paid API)
+5. **Nasdaq** — quote provider (price, change %, volume)
+6. **Yahoo Finance** — spark batch only when not rate-limited (30 min cooldown after HTTP 429)
+7. **MarketWatch** — premarket movers (often blocked on cloud hosts with HTTP 401)
+8. **Yahoo Finance screeners** — day gainers/losers/actives when MarketWatch is blocked
 
 Caching: **5 minutes** for market data, **15 minutes** for daily briefings.
 
@@ -198,7 +204,7 @@ Watchlist signals and semiconductor strength include extra fields so you can san
 | `asOf` | ISO timestamp of the quote (when available) |
 | `quoteSource` | e.g. `Yahoo Finance`, `Nasdaq`, `Finviz topGainers` |
 | `quoteValidated` | `true` when price, change, and % are internally consistent |
-| `dataFreshness` | `"fresh"`, `"delayed"`, `"stale"`, or `"closed_session"` — session-aware (premarket/regular/after-hours/weekend/holiday) |
+| `dataFreshness` | `"fresh"`, `"delayed"`, `"stale"`, `"closed_session"`, or `"cached"` — session-aware for quotes; research tools use `cached` when serving TTL cache or after rate limits |
 | `marketSession` | Current US session: `premarket`, `regular`, `after_hours`, `overnight`, `weekend`, `holiday` |
 | `freshnessAgeMinutes` | Minutes between `asOf` and server time |
 | `freshnessReason` | Human-readable explanation of the freshness classification |
