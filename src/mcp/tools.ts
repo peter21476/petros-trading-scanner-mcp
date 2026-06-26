@@ -409,7 +409,7 @@ export function registerTools(server: McpServer): void {
     "get_options_flow",
     {
       description:
-        "Return unusual options activity for a symbol or market-wide. Requires UNUSUAL_WHALES_API_TOKEN (paid Unusual Whales API); without it returns empty flows with an explanatory note. Read-only.",
+        "Return unusual options activity for a symbol or market-wide. Uses Unusual Whales when UNUSUAL_WHALES_API_TOKEN is set; otherwise yfinance (Yahoo options chain) fallback for single-symbol lookups. Read-only.",
       inputSchema: {
         symbol: optionsFlowInputSchema.shape.symbol,
         minPremium: optionsFlowInputSchema.shape.minPremium,

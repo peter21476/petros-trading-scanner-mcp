@@ -121,10 +121,12 @@ export interface OptionsFlowItem {
   volume: number;
   openInterest: number;
   volumeOiRatio: number | null;
+  ask?: number;
   premium: number;
   sentiment: "bullish" | "bearish";
   timestamp: string;
   unusual: boolean;
+  source?: string;
 }
 
 export interface OptionsFlowResponse {

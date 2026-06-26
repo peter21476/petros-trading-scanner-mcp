@@ -1,5 +1,6 @@
 import { CACHE_TTL, getCachedWithMeta } from "./cache.js";
 import { safeFetchJson } from "./http.js";
+import { fetchYfinanceOptionsFlow } from "./yfinanceOptions.js";
 import type { OptionsFlowItem, OptionsFlowResponse } from "../types/marketResearch.js";
 
 const UNUSUAL_WHALES_BASE = "https://api.unusualwhales.com";
@@ -94,8 +95,11 @@ async function fetchUnusualWhalesFlow(
   return { flows, warnings: [] };
 }
 
-const NO_API_NOTE =
-  "Options flow requires UNUSUAL_WHALES_API_TOKEN (paid Unusual Whales API). Set the env var to enable live unusual activity; otherwise this tool returns an empty flows array.";
+const YFINANCE_FALLBACK_NOTE =
+  "Unusual activity flagged where volume/OI >= 3x. Powered by yfinance fallback.";
+
+const MARKET_WIDE_YFINANCE_MESSAGE =
+  "Market-wide options flow requires UNUSUAL_WHALES_API_TOKEN. yfinance fallback only supports single-symbol lookups.";
 
 /**
  * Unusual options activity from Unusual Whales when configured.
@@ -112,34 +116,61 @@ export async function getOptionsFlow(
     CACHE_TTL.MARKET_DATA_MS,
     async () => {
       const warnings: string[] = [];
-      if (!isUnusualWhalesEnabled()) {
+
+      if (isUnusualWhalesEnabled()) {
+        const result = await fetchUnusualWhalesFlow(upper ?? undefined, minPremium);
+        warnings.push(...result.warnings);
+        if (result.flows.length === 0) {
+          warnings.push("No unusual options flow matched the filters");
+        }
+
         return {
-          source: "none",
-          warnings: [NO_API_NOTE],
-          flows: [] as OptionsFlowItem[],
-          note: NO_API_NOTE,
+          source: "Unusual Whales",
+          dataFreshness: "fresh" as const,
+          warnings,
+          flows: result.flows,
+          note: undefined,
         };
       }
 
-      const result = await fetchUnusualWhalesFlow(upper ?? undefined, minPremium);
-      warnings.push(...result.warnings);
-      if (result.flows.length === 0) {
-        warnings.push("No unusual options flow matched the filters");
+      // yfinance fallback — used when UNUSUAL_WHALES_API_TOKEN is not configured
+      if (!upper) {
+        return {
+          source: "yfinance (fallback)",
+          dataFreshness: "delayed" as const,
+          warnings: [MARKET_WIDE_YFINANCE_MESSAGE],
+          flows: [] as OptionsFlowItem[],
+          note: MARKET_WIDE_YFINANCE_MESSAGE,
+        };
       }
 
-      return {
-        source: "Unusual Whales",
-        warnings,
-        flows: result.flows,
-        note: undefined,
-      };
+      try {
+        const result = await fetchYfinanceOptionsFlow(upper, minPremium);
+        return {
+          source: "yfinance (fallback)",
+          dataFreshness: "delayed" as const,
+          warnings: result.warnings,
+          flows: result.flows,
+          note: YFINANCE_FALLBACK_NOTE,
+        };
+      } catch (error) {
+        return {
+          source: "yfinance (fallback)",
+          dataFreshness: "delayed" as const,
+          warnings: [
+            `yfinance options fetch failed for ${upper}: ${error instanceof Error ? error.message : String(error)}`,
+          ],
+          flows: [] as OptionsFlowItem[],
+          note: YFINANCE_FALLBACK_NOTE,
+        };
+      }
     },
   );
 
   return {
     timestamp: new Date().toISOString(),
     source: data.source,
-    dataFreshness: fromCache ? "cached" : data.source === "none" ? "delayed" : "fresh",
+    dataFreshness: fromCache ? "cached" : data.dataFreshness,
     warnings: data.warnings,
     cached: fromCache,
     cachedAt,

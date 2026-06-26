@@ -25,7 +25,7 @@ Read-only **Model Context Protocol (MCP)** server for short-term stock and ETF *
 | `get_technical_indicators` | RSI, MACD, Bollinger Bands, volume ratio with interpretation hints |
 | `get_sector_rotation` | All 11 S&P 500 sector ETFs ranked by today's performance with rotation theme |
 | `get_ticker_news` | Recent ticker news with per-article sentiment and overall sentiment score |
-| `get_options_flow` | Unusual options activity via Unusual Whales API when `UNUSUAL_WHALES_API_TOKEN` is set |
+| `get_options_flow` | Unusual options activity via Unusual Whales API, or yfinance fallback (volume/OI scan) for single symbols |
 | `get_daily_briefing` | Full briefing with source attribution, confidence, news severity, portfolio notes |
 
 ### Data sources (free/public)
