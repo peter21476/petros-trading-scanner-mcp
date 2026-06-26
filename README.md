@@ -20,6 +20,7 @@ Read-only **Model Context Protocol (MCP)** server for short-term stock and ETF *
 | `get_portfolio_trade_plan` | Account-aware plan: holdings, concentration risk, trim/hold lists, top trades, session plan |
 | `get_aggressive_watchlist_rankings` | Rank watchlist by near-term opportunity with triggers and stops |
 | `get_intraday_decision_check` | “Should I act now?” — per-symbol intraday decisions after market open |
+| `get_best_trades_today` | Highest-conviction short-term candidates with transparent sub-scores and optional rotation plan |
 | `get_daily_briefing` | Full briefing with source attribution, confidence, news severity, portfolio notes |
 
 ### Data sources (free/public)
@@ -238,18 +239,66 @@ Combines market bias, semiconductor sector strength (when relevant), watchlist s
 
 ### Aggressive trading tools (research framework)
 
-All four tools include timestamps, data sources, disclaimers, and quote freshness warnings.
+All tools include timestamps, data sources, disclaimers, and quote freshness warnings. **The MCP does not fetch broker data** — pass `accountContext` from the ChatGPT Robinhood connector.
 
 | Tool | Purpose |
 |------|---------|
-| `get_trade_setup` | One-symbol setup: entry zone, stop, targets, R/R, catalysts, `suggestedAction` |
-| `get_aggressive_watchlist_rankings` | Rank symbols by `aggressiveBuyScore` (0–10) and `probabilityScore` (0–100) |
+| `get_best_trades_today` | Top conviction candidates (0–100) with sub-scores, entry/stop/targets, rotation plan |
+| `get_trade_setup` | One-symbol setup: entry zone, stop, targets, R/R, catalysts |
+| `get_aggressive_watchlist_rankings` | Rank symbols by `aggressiveBuyScore` (0–10) |
 | `get_intraday_decision_check` | Post-open go/no-go with `actNow`, triggers, and `actionWindow` |
-| `get_portfolio_trade_plan` | Full account plan from `account_number` (API or `accountContext` fallback) |
+| `get_portfolio_trade_plan` | Account plan from `accountContext` (holdings, trim lists, session plan) |
 
-**Scoring:** `aggressiveBuyScore` 0–2 avoid, 3–4 watch, 5–6 needs confirmation, 7–8 actionable, 9–10 high conviction.
+### ChatGPT Robinhood connector workflow
 
-**Portfolio API (optional):** Run the included `portfolio-api/` FastAPI service (Robinhood read-only connector) or set `PORTFOLIO_API_BASE_URL` (+ `PORTFOLIO_API_KEY`). See [portfolio-api/README.md](portfolio-api/README.md). Without it, pass `accountContext` with `equityPositions`, `buyingPower`, and `accountValue`.
+The MCP is **read-only** and does not log into Robinhood. Use ChatGPT’s built-in Robinhood connector to fetch account data, then pass it into MCP tools:
+
+1. Use ChatGPT **Robinhood connector** → get accounts, buying power, equity positions, option positions.
+2. Build an `accountContext` object (see example below).
+3. Call MCP tools with that context:
+   - `get_best_trades_today`
+   - `get_portfolio_trade_plan`
+   - `get_intraday_decision_check`
+   - `get_trade_setup` (optional per-symbol context)
+
+**Example `accountContext`:**
+
+```json
+{
+  "accountValue": 90.04,
+  "buyingPower": 0,
+  "equityPositions": [
+    {
+      "symbol": "SOXL",
+      "shares": 0.182748,
+      "averageCost": 273.60,
+      "currentValue": 40.00,
+      "marketValue": 40.00
+    },
+    {
+      "symbol": "AMD",
+      "shares": 0.095706,
+      "averageCost": 522.43,
+      "currentValue": 50.00,
+      "marketValue": 50.00
+    }
+  ],
+  "optionPositions": []
+}
+```
+
+**Example: `get_best_trades_today`**
+
+```json
+{
+  "timeframe": "intraday",
+  "riskTolerance": "aggressive",
+  "maxResults": 10,
+  "accountContext": { "...": "..." }
+}
+```
+
+**Conviction scoring (`get_best_trades_today`):** weighted sub-scores (momentum 20%, relative strength 15%, volume 15%, catalyst 15%, trend 10%, risk/reward 10%, liquidity 5%, market alignment 10%) → `convictionScore` 0–100.
 
 Run tests: `npm test`
 
@@ -271,15 +320,15 @@ src/
     scoring.ts
     marketData.ts
     tradeAnalysis.ts
+    bestTradesToday.ts
+    tradingContext.ts
     tradingTools.ts
     portfolio.ts
     cache.ts
     http.ts
-portfolio-api/
-  app/                 # FastAPI Robinhood read-only portfolio connector
-  requirements.txt
   types/
     market.ts
+    trading.ts
   utils/
     parseNumber.ts
     logger.ts

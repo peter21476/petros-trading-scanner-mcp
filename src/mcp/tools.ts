@@ -3,6 +3,7 @@ import {
   dailyBriefingInputSchema,
   earningsCalendarInputSchema,
   aggressiveWatchlistRankingsInputSchema,
+  bestTradesTodayInputSchema,
   intradayDecisionCheckInputSchema,
   portfolioTradePlanInputSchema,
   positionReviewInputSchema,
@@ -27,6 +28,7 @@ import {
   getPortfolioTradePlan,
   getTradeSetup,
 } from "../services/tradingTools.js";
+import { getBestTradesToday } from "../services/bestTradesToday.js";
 
 function jsonResult(data: unknown) {
   return {
@@ -234,9 +236,8 @@ export function registerTools(server: McpServer): void {
     "get_portfolio_trade_plan",
     {
       description:
-        "Portfolio-aware trading plan using account positions and buying power. Fetches portfolio via PORTFOLIO_API_BASE_URL or accepts accountContext fallback. Read-only — does not place trades.",
+        "Portfolio-aware trading plan using accountContext from ChatGPT Robinhood connector (positions, buying power). Read-only research — does not place trades or fetch broker data.",
       inputSchema: {
-        accountNumber: portfolioTradePlanInputSchema.shape.accountNumber,
         accountContext: portfolioTradePlanInputSchema.shape.accountContext,
         timeframe: portfolioTradePlanInputSchema.shape.timeframe,
       },
@@ -277,10 +278,9 @@ export function registerTools(server: McpServer): void {
     "get_intraday_decision_check",
     {
       description:
-        "After market open: should I act now? Returns per-symbol intraday decisions, market condition, action window, and top items to watch. Read-only research.",
+        "After market open: should I act now? Pass accountContext from ChatGPT Robinhood connector for position-aware decisions. Read-only research.",
       inputSchema: {
         symbols: intradayDecisionCheckInputSchema.shape.symbols,
-        accountNumber: intradayDecisionCheckInputSchema.shape.accountNumber,
         accountContext: intradayDecisionCheckInputSchema.shape.accountContext,
       },
     },
@@ -290,6 +290,29 @@ export function registerTools(server: McpServer): void {
         return jsonResult(await getIntradayDecisionCheck(parsed));
       } catch (error) {
         return errorResult(`get_intraday_decision_check failed: ${String(error)}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    "get_best_trades_today",
+    {
+      description:
+        "Find highest-conviction short-term trade candidates right now with transparent sub-scores, entry/stop/targets, and optional portfolio rotation plan. Pass accountContext from ChatGPT Robinhood connector. Research framework only — not financial advice.",
+      inputSchema: {
+        symbols: bestTradesTodayInputSchema.shape.symbols,
+        maxResults: bestTradesTodayInputSchema.shape.maxResults,
+        timeframe: bestTradesTodayInputSchema.shape.timeframe,
+        riskTolerance: bestTradesTodayInputSchema.shape.riskTolerance,
+        accountContext: bestTradesTodayInputSchema.shape.accountContext,
+      },
+    },
+    async (input) => {
+      try {
+        const parsed = bestTradesTodayInputSchema.parse(input);
+        return jsonResult(await getBestTradesToday(parsed));
+      } catch (error) {
+        return errorResult(`get_best_trades_today failed: ${String(error)}`);
       }
     },
   );

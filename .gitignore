@@ -3,9 +3,3 @@ dist/
 .env
 *.log
 .DS_Store
-portfolio-api/.env
-portfolio-api/.venv/
-portfolio-api/__pycache__/
-portfolio-api/**/__pycache__/
-portfolio-api/*.pyc
-portfolio-api/.pytest_cache/

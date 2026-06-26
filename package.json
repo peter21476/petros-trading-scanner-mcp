@@ -10,7 +10,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "test": "npm run build && node --test dist/services/tradeAnalysis.test.js",
+    "test": "npm run build && node --test dist/services/tradeAnalysis.test.js dist/services/bestTradesToday.test.js",
     "heroku-postbuild": "npm run build"
   },
   "dependencies": {

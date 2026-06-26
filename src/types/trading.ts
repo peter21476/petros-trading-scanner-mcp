@@ -6,7 +6,22 @@ export type SetupType =
   | "pullback"
   | "reversal"
   | "continuation"
+  | "momentum"
   | "avoid";
+
+export type BestTradeSuggestedAction =
+  | "buy_watch"
+  | "wait_for_trigger"
+  | "avoid"
+  | "hold"
+  | "trim";
+
+export type PortfolioBestAction =
+  | "hold_cash"
+  | "hold_current_positions"
+  | "trim_weakest_position"
+  | "rotate_to_best_candidate"
+  | "no_action";
 export type RiskTolerance = "conservative" | "balanced" | "aggressive";
 export type TradeTimeframe = "intraday" | "swing_1_5_days" | "swing_1_2_weeks";
 export type SuggestedTradeAction =
@@ -51,6 +66,73 @@ export interface PortfolioOptionPosition {
   expiration: string;
   contracts: number;
   marketValue?: number;
+}
+
+export interface PortfolioAccountContext {
+  accountValue?: number;
+  buyingPower?: number;
+  equityPositions?: PortfolioEquityPosition[];
+  optionPositions?: PortfolioOptionPosition[];
+}
+
+export interface TradeCandidateScores {
+  momentumScore: number;
+  relativeStrengthScore: number;
+  volumeScore: number;
+  catalystScore: number;
+  trendScore: number;
+  riskRewardScore: number;
+  liquidityScore: number;
+  marketAlignmentScore: number;
+}
+
+export interface BestTradeCandidate {
+  rank: number;
+  symbol: string;
+  companyName: string | null;
+  currentPrice: number | null;
+  bias: TradeBias;
+  setupType: SetupType;
+  convictionScore: number;
+  suggestedAction: BestTradeSuggestedAction;
+  entryZone: PriceZone;
+  stopLoss: StopLossLevel;
+  profitTargets: ProfitTargets;
+  riskReward: RiskRewardMetrics;
+  scores: TradeCandidateScores;
+  catalysts: string[];
+  risks: string[];
+  whyThisTrade: string;
+  invalidationConditions: string[];
+}
+
+export interface PortfolioRotationPlan {
+  buyingPower: number;
+  canBuyNow: boolean;
+  positionsToConsiderSelling: string[];
+  positionsToAvoidAdding: string[];
+  rotationCandidates: Array<{
+    sellSymbol: string;
+    buySymbol: string;
+    reason: string;
+  }>;
+  bestAction: PortfolioBestAction;
+  summary: string;
+}
+
+export interface BestTradesTodayResponse {
+  timestamp: string;
+  disclaimer: string;
+  timeframe: TradeTimeframe;
+  riskTolerance: RiskTolerance;
+  marketCondition: MarketCondition;
+  actionWindow: ActionWindow;
+  candidateCount: number;
+  sources: TradeSetupSources;
+  sourceWarnings: string[];
+  results: BestTradeCandidate[];
+  portfolioRotationPlan?: PortfolioRotationPlan;
+  summary: string;
 }
 
 export interface PortfolioSnapshot {
@@ -156,7 +238,6 @@ export interface AggressiveWatchlistRankingsResponse {
 export interface PortfolioTradePlanResponse {
   timestamp: string;
   disclaimer: string;
-  accountNumber: string;
   accountValue: number | null;
   buyingPower: number | null;
   holdings: {

@@ -27,6 +27,7 @@ export const dailyBriefingInputSchema = z.object({
 export type PremarketMoversInput = z.infer<typeof premarketMoversInputSchema>;
 export type EarningsCalendarInput = z.infer<typeof earningsCalendarInputSchema>;
 export type WatchlistSignalsInput = z.infer<typeof watchlistSignalsInputSchema>;
+
 export const positionReviewInputSchema = z.object({
   symbol: z.string().min(1).max(10),
   costBasis: z.number().positive().optional(),
@@ -36,11 +37,35 @@ export const positionReviewInputSchema = z.object({
 
 export type PositionReviewInput = z.infer<typeof positionReviewInputSchema>;
 
-export const tradeAccountContextSchema = z.object({
+export const equityPositionSchema = z.object({
+  symbol: z.string().min(1).max(10),
+  shares: z.number().positive(),
+  averageCost: z.number().positive(),
+  currentValue: z.number().positive().optional(),
+  marketValue: z.number().positive().optional(),
+});
+
+export const optionPositionSchema = z.object({
+  symbol: z.string().min(1).max(20),
+  underlying: z.string().min(1).max(10),
+  type: z.enum(["call", "put"]),
+  strike: z.number().positive(),
+  expiration: z.string().min(1),
+  contracts: z.number().positive(),
+  marketValue: z.number().optional(),
+});
+
+export const portfolioAccountContextSchema = z.object({
+  accountValue: z.number().positive().optional(),
+  buyingPower: z.number().optional(),
+  equityPositions: z.array(equityPositionSchema).optional(),
+  optionPositions: z.array(optionPositionSchema).optional(),
+});
+
+export const tradeAccountContextSchema = portfolioAccountContextSchema.extend({
   currentPositionShares: z.number().optional(),
   averageCost: z.number().positive().optional(),
   currentValue: z.number().positive().optional(),
-  buyingPower: z.number().optional(),
   riskTolerance: z.enum(["conservative", "balanced", "aggressive"]).optional(),
   timeframe: z
     .enum(["intraday", "swing_1_5_days", "swing_1_2_weeks"])
@@ -59,37 +84,7 @@ export const aggressiveWatchlistRankingsInputSchema = z.object({
     .optional(),
 });
 
-export const portfolioAccountContextSchema = z.object({
-  accountValue: z.number().positive().optional(),
-  buyingPower: z.number().optional(),
-  equityPositions: z
-    .array(
-      z.object({
-        symbol: z.string().min(1).max(10),
-        shares: z.number().positive(),
-        averageCost: z.number().positive(),
-        currentValue: z.number().positive().optional(),
-        marketValue: z.number().positive().optional(),
-      }),
-    )
-    .optional(),
-  optionPositions: z
-    .array(
-      z.object({
-        symbol: z.string().min(1).max(20),
-        underlying: z.string().min(1).max(10),
-        type: z.enum(["call", "put"]),
-        strike: z.number().positive(),
-        expiration: z.string().min(1),
-        contracts: z.number().positive(),
-        marketValue: z.number().optional(),
-      }),
-    )
-    .optional(),
-});
-
 export const portfolioTradePlanInputSchema = z.object({
-  accountNumber: z.string().min(1).max(64),
   accountContext: portfolioAccountContextSchema.optional(),
   timeframe: z
     .enum(["intraday", "swing_1_5_days", "swing_1_2_weeks"])
@@ -98,10 +93,17 @@ export const portfolioTradePlanInputSchema = z.object({
 
 export const intradayDecisionCheckInputSchema = z.object({
   symbols: z.array(z.string().min(1).max(10)).min(1).max(20),
-  accountNumber: z.string().min(1).max(64).optional(),
-  accountContext: portfolioAccountContextSchema
-    .pick({ buyingPower: true, equityPositions: true })
+  accountContext: portfolioAccountContextSchema.optional(),
+});
+
+export const bestTradesTodayInputSchema = z.object({
+  symbols: z.array(z.string().min(1).max(10)).min(1).max(40).optional(),
+  maxResults: z.number().int().min(1).max(25).optional(),
+  timeframe: z
+    .enum(["intraday", "swing_1_5_days", "swing_1_2_weeks"])
     .optional(),
+  riskTolerance: z.enum(["conservative", "balanced", "aggressive"]).optional(),
+  accountContext: portfolioAccountContextSchema.optional(),
 });
 
 export type TradeSetupInput = z.infer<typeof tradeSetupInputSchema>;
@@ -112,3 +114,4 @@ export type PortfolioTradePlanInput = z.infer<typeof portfolioTradePlanInputSche
 export type IntradayDecisionCheckInput = z.infer<
   typeof intradayDecisionCheckInputSchema
 >;
+export type BestTradesTodayInput = z.infer<typeof bestTradesTodayInputSchema>;

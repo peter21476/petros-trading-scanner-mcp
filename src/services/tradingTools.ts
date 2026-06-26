@@ -1,12 +1,8 @@
 import { CACHE_TTL, getCached } from "./cache.js";
-import { safeFetchFinvizHomepage } from "./finviz.js";
 import {
-  fetchPortfolio,
-  isPortfolioApiConfigured,
+  ACCOUNT_CONTEXT_REQUIRED_MESSAGE,
   portfolioFromAccountContext,
-  computePositionPnlPercent,
 } from "./portfolio.js";
-import { fetchQuotes } from "./quotes.js";
 import {
   buildAggressiveWatchlistEntry,
   buildIntradaySymbolDecision,
@@ -16,27 +12,12 @@ import {
   computeAccountRiskLevel,
   computeConcentrationRisk,
   equityToAccountContext,
-  type MarketAnalysisBundle,
-  type SymbolAnalysisInput,
 } from "./tradeAnalysis.js";
-import {
-  computeMarketBias,
-  computeSemiconductorStrength,
-  neutralSemiconductorStrength,
-  scoreWatchlistSymbol,
-  symbolUsesSemiconductorContext,
-} from "./scoring.js";
-import { getFutures } from "./marketData.js";
-import {
-  emptyBreadth,
-  SEMICONDUCTOR_SYMBOLS,
-} from "../types/market.js";
+import { loadTradingContext } from "./tradingContext.js";
 import type {
   AggressiveWatchlistRankingsResponse,
   IntradayDecisionCheckResponse,
-  PortfolioEquityPosition,
-  PortfolioOptionPosition,
-  PortfolioSnapshot,
+  PortfolioAccountContext,
   PortfolioTradePlanResponse,
   TradeAccountContext,
   TradeSetupResponse,
@@ -44,104 +25,6 @@ import type {
 } from "../types/trading.js";
 import { TRADING_DISCLAIMER } from "../types/trading.js";
 import { detectMarketSession } from "../utils/marketSession.js";
-
-interface FinvizSnapshotLists {
-  topGainers: { symbol: string }[];
-  topLosers: { symbol: string }[];
-  unusualVolume: { symbol: string }[];
-  majorNews: { symbol: string }[];
-}
-
-function finvizListsForSymbol(symbol: string, snapshot: FinvizSnapshotLists): string[] {
-  const upper = symbol.toUpperCase();
-  const lists: string[] = [];
-  if (snapshot.topGainers.some((s) => s.symbol === upper)) lists.push("topGainers");
-  if (snapshot.topLosers.some((s) => s.symbol === upper)) lists.push("topLosers");
-  if (snapshot.unusualVolume.some((s) => s.symbol === upper)) lists.push("unusualVolume");
-  if (snapshot.majorNews.some((s) => s.symbol === upper)) lists.push("majorNews");
-  return lists;
-}
-
-async function loadTradingContext(symbols: string[]): Promise<{
-  market: MarketAnalysisBundle;
-  symbolAnalyses: Map<string, SymbolAnalysisInput>;
-  warnings: string[];
-}> {
-  const warnings: string[] = [];
-  const finviz = await safeFetchFinvizHomepage();
-  if (finviz.warning) {
-    warnings.push(finviz.warning);
-  }
-
-  const futuresResult = await getFutures();
-  warnings.push(...(futuresResult.warnings ?? []));
-
-  const breadth = finviz.data?.breadth ?? emptyBreadth();
-  const marketBias = computeMarketBias(futuresResult.futures, breadth);
-  const nasdaqFuturesChange = futuresResult.futures.nasdaq100.changePercent;
-
-  const needsSemi = symbols.some((symbol) => symbolUsesSemiconductorContext(symbol));
-  const quoteSymbols = [
-    ...new Set([
-      ...symbols.map((s) => s.toUpperCase()),
-      ...(needsSemi ? [...SEMICONDUCTOR_SYMBOLS] : []),
-    ]),
-  ];
-
-  const quoteResult = await fetchQuotes(quoteSymbols, {
-    finvizSnapshot: finviz.data ?? null,
-  });
-  warnings.push(...quoteResult.warnings);
-
-  if (quoteResult.diagnostics.yahooSkipped) {
-    warnings.push("Yahoo Finance skipped (rate-limited)");
-  }
-
-  const semiconductorStrength = needsSemi
-    ? computeSemiconductorStrength(quoteResult.quotes, finviz.data?.majorNews ?? [])
-    : neutralSemiconductorStrength();
-
-  const snapshot: FinvizSnapshotLists = {
-    topGainers: finviz.data?.topGainers ?? [],
-    topLosers: finviz.data?.topLosers ?? [],
-    unusualVolume: finviz.data?.unusualVolume ?? [],
-    majorNews: finviz.data?.majorNews ?? [],
-  };
-
-  const symbolAnalyses = new Map<string, SymbolAnalysisInput>();
-  for (const symbol of symbols) {
-    const upper = symbol.toUpperCase();
-    const quote = quoteResult.quotes.get(upper) ?? null;
-    const finvizLists = finvizListsForSymbol(upper, snapshot);
-    const signal = scoreWatchlistSymbol({
-      symbol: upper,
-      quote,
-      finvizLists,
-      headline: null,
-      marketBias,
-      semiconductorStrength,
-      nasdaqFuturesChange,
-    });
-    symbolAnalyses.set(upper, { symbol: upper, quote, signal, finvizLists });
-  }
-
-  const market: MarketAnalysisBundle = {
-    marketBias,
-    semiconductorStrength,
-    futures: futuresResult.futures,
-    breadth,
-    nasdaqFuturesChange,
-    sources: {
-      quoteSource: quoteResult.quotes.values().next().value?.source ?? null,
-      futuresSource: futuresResult.source,
-      breadthSource: "Finviz",
-      semiconductorSource: needsSemi ? "Finviz + quotes" : null,
-    },
-    warnings,
-  };
-
-  return { market, symbolAnalyses, warnings };
-}
 
 export async function getTradeSetup(input: {
   symbol: string;
@@ -157,7 +40,7 @@ export async function getTradeSetup(input: {
       throw new Error(`Unable to analyze ${symbol}`);
     }
 
-    const setup = buildTradeSetup({
+    return buildTradeSetup({
       symbolAnalysis: analysis,
       market: {
         ...market,
@@ -165,8 +48,6 @@ export async function getTradeSetup(input: {
       },
       account: input.accountContext,
     });
-
-    return setup;
   });
 }
 
@@ -220,60 +101,27 @@ export async function getAggressiveWatchlistRankings(input: {
   });
 }
 
-async function resolvePortfolio(input: {
-  accountNumber: string;
-  accountContext?: {
-    accountValue?: number;
-    buyingPower?: number;
-    equityPositions?: PortfolioEquityPosition[];
-    optionPositions?: PortfolioOptionPosition[];
-  };
-}): Promise<{ portfolio: PortfolioSnapshot | null; warnings: string[] }> {
-  const warnings: string[] = [];
-  let portfolio = await fetchPortfolio(input.accountNumber);
-
-  if (!portfolio && input.accountContext) {
-    portfolio = portfolioFromAccountContext({
-      accountNumber: input.accountNumber,
-      ...input.accountContext,
-    });
-    warnings.push("Portfolio loaded from supplied accountContext (API not used).");
-  }
-
-  if (!portfolio) {
-    if (!isPortfolioApiConfigured()) {
-      warnings.push(
-        "Portfolio API not configured (set PORTFOLIO_API_BASE_URL) and no accountContext supplied. Configure API or pass equity positions in accountContext.",
-      );
-    } else {
-      warnings.push(`Unable to fetch portfolio for account ${input.accountNumber}.`);
-    }
-  } else if (portfolio.warnings?.length) {
-    warnings.push(...portfolio.warnings);
-  }
-
-  return { portfolio, warnings };
-}
-
 export async function getPortfolioTradePlan(input: {
-  accountNumber: string;
-  accountContext?: {
-    accountValue?: number;
-    buyingPower?: number;
-    equityPositions?: PortfolioEquityPosition[];
-    optionPositions?: PortfolioOptionPosition[];
-  };
+  accountContext?: PortfolioAccountContext;
   timeframe?: TradeTimeframe;
 }): Promise<PortfolioTradePlanResponse> {
   const timeframe = input.timeframe ?? "swing_1_5_days";
-  const cacheKey = `tool:portfolio-plan:${input.accountNumber}:${timeframe}:${JSON.stringify(input.accountContext ?? {})}`;
+  const cacheKey = `tool:portfolio-plan:${timeframe}:${JSON.stringify(input.accountContext ?? {})}`;
 
   return getCached(cacheKey, CACHE_TTL.MARKET_DATA_MS, async () => {
-    const { portfolio, warnings: portfolioWarnings } = await resolvePortfolio(input);
+    const portfolioWarnings: string[] = [];
+    const portfolio = input.accountContext
+      ? portfolioFromAccountContext(input.accountContext)
+      : null;
+
+    if (!portfolio) {
+      portfolioWarnings.push(ACCOUNT_CONTEXT_REQUIRED_MESSAGE);
+    }
+
     const symbols =
       portfolio?.equityPositions.map((position) => position.symbol.toUpperCase()) ?? [];
     const { market, symbolAnalyses, warnings } = await loadTradingContext(
-      symbols.length > 0 ? symbols : ["SPY"],
+      symbols.length > 0 ? symbols : ["SPY", "QQQ", "NVDA"],
     );
 
     const marketSession = detectMarketSession();
@@ -287,14 +135,14 @@ export async function getPortfolioTradePlan(input: {
     const setups: TradeSetupResponse[] = [];
     for (const position of portfolio?.equityPositions ?? []) {
       const analysis = symbolAnalyses.get(position.symbol.toUpperCase());
-      if (!analysis) {
+      if (!analysis || !portfolio) {
         continue;
       }
       setups.push(
         buildTradeSetup({
           symbolAnalysis: analysis,
           market,
-          account: equityToAccountContext(position, portfolio!, timeframe),
+          account: equityToAccountContext(position, portfolio, timeframe),
         }),
       );
     }
@@ -308,16 +156,10 @@ export async function getPortfolioTradePlan(input: {
       if (setup.aggressiveBuyScore >= 7 && setup.suggestedAction === "buy") {
         bestOpportunities.push(`${setup.symbol}: ${setup.summary}`);
       }
-      if (
-        setup.suggestedAction === "hold" ||
-        setup.suggestedAction === "watch"
-      ) {
+      if (setup.suggestedAction === "hold" || setup.suggestedAction === "watch") {
         positionsToHold.push(setup.symbol);
       }
-      if (
-        setup.suggestedAction === "trim" ||
-        setup.suggestedAction === "sell"
-      ) {
+      if (setup.suggestedAction === "trim" || setup.suggestedAction === "sell") {
         positionsToTrim.push(setup.symbol);
       }
       if (
@@ -339,9 +181,7 @@ export async function getPortfolioTradePlan(input: {
         summary: setup.summary,
       }));
 
-    const concentrationRisk = portfolio
-      ? computeConcentrationRisk(portfolio)
-      : [];
+    const concentrationRisk = portfolio ? computeConcentrationRisk(portfolio) : [];
     const accountRiskLevel = portfolio
       ? computeAccountRiskLevel(portfolio, concentrationRisk)
       : "unknown";
@@ -383,7 +223,6 @@ export async function getPortfolioTradePlan(input: {
     return {
       timestamp: new Date().toISOString(),
       disclaimer: TRADING_DISCLAIMER,
-      accountNumber: input.accountNumber,
       accountValue: portfolio?.accountValue ?? null,
       buyingPower: portfolio?.buyingPower ?? null,
       holdings: {
@@ -413,26 +252,21 @@ export async function getPortfolioTradePlan(input: {
 
 export async function getIntradayDecisionCheck(input: {
   symbols: string[];
-  accountNumber?: string;
-  accountContext?: {
-    buyingPower?: number;
-    equityPositions?: PortfolioEquityPosition[];
-  };
+  accountContext?: PortfolioAccountContext;
 }): Promise<IntradayDecisionCheckResponse> {
   const symbols = input.symbols.map((s) => s.toUpperCase());
-  const cacheKey = `tool:intraday-check:${symbols.join(",")}:${input.accountNumber ?? ""}`;
+  const cacheKey = `tool:intraday-check:${symbols.join(",")}:${JSON.stringify(input.accountContext ?? {})}`;
 
   return getCached(cacheKey, CACHE_TTL.MARKET_DATA_MS, async () => {
     const warnings: string[] = [];
-    let portfolio: PortfolioSnapshot | null = null;
+    const portfolio = input.accountContext
+      ? portfolioFromAccountContext(input.accountContext)
+      : null;
 
-    if (input.accountNumber) {
-      const resolved = await resolvePortfolio({
-        accountNumber: input.accountNumber,
-        accountContext: input.accountContext,
-      });
-      portfolio = resolved.portfolio;
-      warnings.push(...resolved.warnings);
+    if (!portfolio && input.accountContext === undefined) {
+      warnings.push(
+        "No accountContext supplied — decisions are market-only without position awareness.",
+      );
     }
 
     const { market, symbolAnalyses, warnings: ctxWarnings } =
@@ -464,8 +298,8 @@ export async function getIntradayDecisionCheck(input: {
       const position = portfolio?.equityPositions.find(
         (p) => p.symbol.toUpperCase() === symbol,
       );
-      const account: TradeAccountContext | undefined = position
-        ? equityToAccountContext(position, portfolio!, "intraday")
+      const account: TradeAccountContext | undefined = position && portfolio
+        ? equityToAccountContext(position, portfolio, "intraday")
         : {
             buyingPower: portfolio?.buyingPower ?? input.accountContext?.buyingPower,
             timeframe: "intraday",
@@ -507,6 +341,3 @@ export async function getIntradayDecisionCheck(input: {
     };
   });
 }
-
-// Re-export for tests
-export { computePositionPnlPercent };
