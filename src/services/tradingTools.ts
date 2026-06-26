@@ -248,6 +248,8 @@ async function resolvePortfolio(input: {
     } else {
       warnings.push(`Unable to fetch portfolio for account ${input.accountNumber}.`);
     }
+  } else if (portfolio.warnings?.length) {
+    warnings.push(...portfolio.warnings);
   }
 
   return { portfolio, warnings };

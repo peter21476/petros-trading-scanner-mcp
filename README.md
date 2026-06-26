@@ -249,7 +249,7 @@ All four tools include timestamps, data sources, disclaimers, and quote freshnes
 
 **Scoring:** `aggressiveBuyScore` 0–2 avoid, 3–4 watch, 5–6 needs confirmation, 7–8 actionable, 9–10 high conviction.
 
-**Portfolio API (optional):** Set `PORTFOLIO_API_BASE_URL` (+ `PORTFOLIO_API_KEY`) to fetch live holdings. Without it, pass `accountContext` with `equityPositions`, `buyingPower`, and `accountValue`.
+**Portfolio API (optional):** Run the included `portfolio-api/` FastAPI service (Robinhood read-only connector) or set `PORTFOLIO_API_BASE_URL` (+ `PORTFOLIO_API_KEY`). See [portfolio-api/README.md](portfolio-api/README.md). Without it, pass `accountContext` with `equityPositions`, `buyingPower`, and `accountValue`.
 
 Run tests: `npm test`
 
@@ -275,6 +275,9 @@ src/
     portfolio.ts
     cache.ts
     http.ts
+portfolio-api/
+  app/                 # FastAPI Robinhood read-only portfolio connector
+  requirements.txt
   types/
     market.ts
   utils/

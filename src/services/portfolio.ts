@@ -7,12 +7,25 @@ import type {
 import { logger } from "../utils/logger.js";
 
 interface PortfolioApiResponse {
+  accountNumber?: string;
   accountValue?: number;
   buyingPower?: number;
+  cash?: number;
   equityPositions?: PortfolioEquityPosition[];
   optionPositions?: PortfolioOptionPosition[];
   positions?: PortfolioEquityPosition[];
   options?: PortfolioOptionPosition[];
+  updatedAt?: string;
+  source?: string;
+  warnings?: string[];
+}
+
+function portfolioApiUrl(baseUrl: string, accountNumber: string): string {
+  const base = baseUrl.replace(/\/$/, "");
+  if (base.endsWith("/portfolio")) {
+    return `${base}/${encodeURIComponent(accountNumber)}`;
+  }
+  return `${base}/accounts/${encodeURIComponent(accountNumber)}/portfolio`;
 }
 
 export function isPortfolioApiConfigured(): boolean {
@@ -27,8 +40,10 @@ export async function fetchPortfolio(
     return null;
   }
 
-  const apiKey = process.env.PORTFOLIO_API_KEY?.trim();
-  const url = `${baseUrl.replace(/\/$/, "")}/accounts/${encodeURIComponent(accountNumber)}/portfolio`;
+  const apiKey =
+    process.env.PORTFOLIO_API_KEY?.trim() ||
+    process.env.PORTFOLIO_API_TOKEN?.trim();
+  const url = portfolioApiUrl(baseUrl, accountNumber);
   const headers: Record<string, string> = { Accept: "application/json" };
   if (apiKey) {
     headers.Authorization = `Bearer ${apiKey}`;
@@ -44,12 +59,13 @@ export async function fetchPortfolio(
     const optionPositions = data.optionPositions ?? data.options ?? [];
 
     return {
-      accountNumber,
+      accountNumber: data.accountNumber ?? accountNumber,
       accountValue: data.accountValue ?? 0,
       buyingPower: data.buyingPower ?? 0,
       equityPositions,
       optionPositions,
-      source: "portfolio_api",
+      source: data.source ?? "portfolio_api",
+      warnings: data.warnings,
     };
   } catch (error) {
     logger.warn("Portfolio API fetch failed", {
