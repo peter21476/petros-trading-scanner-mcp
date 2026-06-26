@@ -13,6 +13,17 @@ export interface OhlcvBar {
   volume: number;
 }
 
+export interface HistoricalPriceSummary {
+  currentPrice: number | null;
+  sma20: number | null;
+  sma50: number | null;
+  distanceFromSma20Pct: number | null;
+  distanceFromSma50Pct: number | null;
+  week52High: number | null;
+  week52Low: number | null;
+}
+
+/** @deprecated Use HistoricalPriceSummary */
 export interface HistoricalPriceMetrics {
   sma20: number | null;
   sma50: number | null;
@@ -28,8 +39,9 @@ export interface SymbolHistoricalPrices {
   symbol: string;
   period: PricePeriod;
   interval: PriceInterval;
-  bars: OhlcvBar[];
-  metrics: HistoricalPriceMetrics;
+  bars?: OhlcvBar[];
+  summary?: HistoricalPriceSummary;
+  error?: string;
 }
 
 export interface HistoricalPricesResponse {
@@ -39,7 +51,7 @@ export interface HistoricalPricesResponse {
   warnings: string[];
   cached?: boolean;
   cachedAt?: string | null;
-  symbols: SymbolHistoricalPrices[];
+  results: SymbolHistoricalPrices[];
 }
 
 export interface TechnicalIndicatorValues {

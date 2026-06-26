@@ -330,7 +330,7 @@ export function registerTools(server: McpServer): void {
     "get_historical_prices",
     {
       description:
-        "Fetch OHLCV price history for one or more symbols with 20/50-day SMA distance and 52-week high/low. Uses Finnhub candles when configured, otherwise Yahoo Finance. Read-only.",
+        "Fetch OHLCV price history for one or more symbols with 20/50-day SMA distance and 52-week high/low via yfinance (free, 15-min delay). Read-only.",
       inputSchema: {
         symbols: historicalPricesInputSchema.shape.symbols,
         period: historicalPricesInputSchema.shape.period,

@@ -1,9 +1,14 @@
-import { safeFetchJson } from "./http.js";
 import { withYahooThrottle } from "./yahooSpark.js";
 import {
   isYahooRateLimited,
   markYahooRateLimited,
 } from "../utils/yahooRateLimit.js";
+import { logger } from "../utils/logger.js";
+import {
+  clearYahooAuthCache,
+  getYahooAuth,
+  yahooAuthenticatedGet,
+} from "./yahooCrumb.js";
 import type { OhlcvBar, PriceInterval, PricePeriod } from "../types/marketResearch.js";
 
 interface YahooChartResponse {
@@ -23,6 +28,11 @@ interface YahooChartResponse {
     error?: { description?: string };
   };
 }
+
+const CHART_HOSTS = [
+  "query1.finance.yahoo.com",
+  "query2.finance.yahoo.com",
+] as const;
 
 export interface YahooChartFetchResult {
   bars: OhlcvBar[];
@@ -66,33 +76,30 @@ function toBars(data: YahooChartResponse): OhlcvBar[] {
   return bars;
 }
 
-/**
- * Fetch OHLCV bars from Yahoo Finance chart API.
- */
-export async function fetchYahooChart(
+async function fetchYahooChartOnce(
   symbol: string,
   period: PricePeriod,
   interval: PriceInterval,
+  host: (typeof CHART_HOSTS)[number],
 ): Promise<YahooChartFetchResult> {
   const warnings: string[] = [];
-  if (isYahooRateLimited()) {
+  const auth = await getYahooAuth();
+  if (!auth) {
     return {
       bars: [],
-      warnings: ["Yahoo Finance rate-limited; use cached data if available"],
-      rateLimited: true,
+      warnings: ["Yahoo auth unavailable for chart request"],
+      rateLimited: false,
     };
   }
 
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${period}&interval=${interval}`;
+  const url = `https://${host}/v8/finance/chart/${encodeURIComponent(symbol)}?range=${period}&interval=${interval}&crumb=${encodeURIComponent(auth.crumb)}`;
   const response = await withYahooThrottle(() =>
-    fetch(url, {
-      headers: {
-        Accept: "application/json",
-        "User-Agent":
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-      },
-    }),
+    yahooAuthenticatedGet(url, symbol),
   );
+
+  if (!response) {
+    return { bars: [], warnings: ["Yahoo chart request failed"], rateLimited: false };
+  }
 
   if (response.status === 429) {
     markYahooRateLimited();
@@ -101,6 +108,12 @@ export async function fetchYahooChart(
       warnings: ["Yahoo Finance rate-limited (HTTP 429)"],
       rateLimited: true,
     };
+  }
+
+  if (response.status === 401) {
+    clearYahooAuthCache();
+    warnings.push(`Yahoo chart unauthorized for ${symbol}`);
+    return { bars: [], warnings, rateLimited: false };
   }
 
   if (!response.ok) {
@@ -114,6 +127,39 @@ export async function fetchYahooChart(
   }
 
   return { bars: toBars(data), warnings, rateLimited: false };
+}
+
+/**
+ * Fetch OHLCV bars from Yahoo Finance chart API (yfinance data source).
+ */
+export async function fetchYahooChart(
+  symbol: string,
+  period: PricePeriod,
+  interval: PriceInterval,
+): Promise<YahooChartFetchResult> {
+  if (isYahooRateLimited()) {
+    return {
+      bars: [],
+      warnings: ["Yahoo Finance rate-limited; use cached data if available"],
+      rateLimited: true,
+    };
+  }
+
+  const mergedWarnings: string[] = [];
+  for (const host of CHART_HOSTS) {
+    const result = await fetchYahooChartOnce(symbol, period, interval, host);
+    mergedWarnings.push(...result.warnings);
+    if (result.bars.length > 0) {
+      return { bars: result.bars, warnings: mergedWarnings, rateLimited: result.rateLimited };
+    }
+  }
+
+  logger.warn("[historical_prices] yfinance chart returned no bars", {
+    symbol,
+    period,
+    interval,
+  });
+  return { bars: [], warnings: mergedWarnings, rateLimited: false };
 }
 
 /**

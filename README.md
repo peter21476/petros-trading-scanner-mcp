@@ -21,7 +21,7 @@ Read-only **Model Context Protocol (MCP)** server for short-term stock and ETF *
 | `get_aggressive_watchlist_rankings` | Rank watchlist by near-term opportunity with triggers and stops |
 | `get_intraday_decision_check` | “Should I act now?” — per-symbol intraday decisions after market open |
 | `get_best_trades_today` | Highest-conviction short-term candidates with transparent sub-scores and optional rotation plan |
-| `get_historical_prices` | OHLCV history with 20/50-day SMA distance and 52-week high/low (Finnhub or Yahoo) |
+| `get_historical_prices` | OHLCV history with SMA summary via yfinance (free, 15-min delay) |
 | `get_technical_indicators` | RSI, MACD, Bollinger Bands, volume ratio with interpretation hints |
 | `get_sector_rotation` | All 11 S&P 500 sector ETFs ranked by today's performance with rotation theme |
 | `get_ticker_news` | Recent ticker news with per-article sentiment and overall sentiment score |
